@@ -61,6 +61,11 @@ def main() -> None:
         help="Pipeline profile or 'auto' (default: standard)",
     )
     ingest_p.add_argument(
+        "--deep",
+        action="store_true",
+        help="Enable deep enrichment: Camelot + Unstructured fallback for tables and formula text",
+    )
+    ingest_p.add_argument(
         "--skip-quality",
         action="store_true",
         help="Skip quality evaluation",
@@ -139,6 +144,7 @@ def main() -> None:
             source=args.source,
             profile=args.profile,
             skip_quality=args.skip_quality,
+            deep=args.deep,
         )
 
         if result.success:

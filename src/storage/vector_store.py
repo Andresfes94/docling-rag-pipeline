@@ -88,6 +88,46 @@ class VectorStore:
         _log.info("Added %d chunks. Total in store: %d", len(chunks), count)
         return count
 
+    def count_by_source(self) -> dict[str, int]:
+        all_meta = self._collection.get(include=["metadatas"])
+        counts: dict[str, int] = {}
+        for m in (all_meta.get("metadatas") or []):
+            if m and "source" in m:
+                counts[m["source"]] = counts.get(m["source"], 0) + 1
+        return counts
+
+    def get_source_info(self, source: str) -> dict | None:
+        all_meta = self._collection.get(
+            where={"source": source},
+            include=["metadatas"],
+        )
+        metas = all_meta.get("metadatas") or []
+        if not metas:
+            return None
+        pages = sorted(set(
+            int(m["page"]) for m in metas if m and "page" in m and isinstance(m["page"], (int, float))
+        ))
+        profiles = sorted(set(
+            m.get("profile", "standard") for m in metas if m
+        ))
+        return {
+            "source": source,
+            "chunk_count": len(metas),
+            "pages": pages,
+            "profiles_used": profiles,
+        }
+
+    def delete_source(self, source: str) -> int:
+        all_ids = self._collection.get(
+            where={"source": source},
+            include=[],
+        )
+        ids = all_ids.get("ids") or []
+        if ids:
+            self._collection.delete(ids=ids)
+        _log.info("Deleted %d chunks for source '%s'", len(ids), source)
+        return len(ids)
+
     def query(
         self,
         query_text: str,

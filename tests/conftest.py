@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 
+
 @pytest.fixture
 def profiles_path() -> Path:
     return Path(__file__).resolve().parent.parent / "profiles.yaml"

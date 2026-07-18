@@ -69,29 +69,31 @@ class RAGPipeline:
         source: str | Path,
         profile: str = "standard",
         skip_quality: bool = False,
+        deep: bool = False,
     ) -> IngestionResult:
         if profile == "auto":
-            return self._ingest_with_detection(source, skip_quality)
+            return self._ingest_with_detection(source, skip_quality, deep=deep)
 
-        result = self._try_ingest(source, profile, skip_quality)
+        result = self._try_ingest(source, profile, skip_quality, deep=deep)
         if result.success and result.chunking and not result.chunking.empty_document:
             return result
 
         if not self._auto_retry:
             return result
 
-        return self._retry_chain(source, result, skip_quality)
+        return self._retry_chain(source, result, skip_quality, deep=deep)
 
     def _ingest_with_detection(
         self,
         source: str | Path,
         skip_quality: bool,
+        deep: bool = False,
     ) -> IngestionResult:
         doc_profile = detect(source)
         suggested = doc_profile.suggested_profile()
         _log.info("Auto-detected profile '%s' for %s", suggested, source)
 
-        result = self._try_ingest(source, suggested, skip_quality)
+        result = self._try_ingest(source, suggested, skip_quality, deep=deep)
         result.detector_info = doc_profile.to_dict()
 
         if result.success and result.chunking and not result.chunking.empty_document:
@@ -100,7 +102,7 @@ class RAGPipeline:
         if not self._auto_retry:
             return result
 
-        return self._retry_chain(source, result, skip_quality)
+        return self._retry_chain(source, result, skip_quality, deep=deep)
 
     def _try_ingest(
         self,
@@ -108,6 +110,7 @@ class RAGPipeline:
         profile: str,
         skip_quality: bool,
         timeout: int = 0,
+        deep: bool = False,
     ) -> IngestionResult:
         result = IngestionResult(source=str(source), profile=profile)
         _log.info("=== TRY: %s (profile=%s) ===", source, profile)
@@ -133,7 +136,7 @@ class RAGPipeline:
 
             _log.info("Conversion done: %d pages in %.2fs", conversion.page_count, conversion.duration_seconds)
 
-            extracted = extract(conversion.document, source=str(source))
+            extracted = extract(conversion.document, source=str(source), deep=deep)
             _log.info(
                 "Extracted: %d text items (%d empty), %d tables",
                 len(extracted.texts),
@@ -194,6 +197,7 @@ class RAGPipeline:
         source: str | Path,
         first_result: IngestionResult,
         skip_quality: bool,
+        deep: bool = False,
     ) -> IngestionResult:
         chain = [first_result.profile]
 
@@ -209,7 +213,7 @@ class RAGPipeline:
                 continue
 
             _log.warning("Retrying %s with profile '%s' (previous: %s)", source, fb, chain[-1])
-            result = self._try_ingest(source, fb, skip_quality)
+            result = self._try_ingest(source, fb, skip_quality, deep=deep)
             result.retry_chain = chain + [fb]
 
             if result.success and result.chunking and not result.chunking.empty_document:
@@ -231,6 +235,18 @@ class RAGPipeline:
             where=where,
         )
 
+    def delete_source(self, source: str) -> int:
+        return self._store.delete_source(source)
+
+    def list_documents(self) -> list[dict]:
+        return self._store.list_sources()
+
+    def get_document_info(self, source: str) -> dict | None:
+        return self._store.get_source_info(source)
+
+    def count_by_source(self) -> dict[str, int]:
+        return self._store.count_by_source()
+
     def status(self) -> dict:
         return {
             "document_count": self._store.document_count(),
@@ -238,4 +254,5 @@ class RAGPipeline:
             "embedding_model": self._embedding_model,
             "output_dir": str(self._output_dir),
             "auto_retry": self._auto_retry,
+            "chunk_count_by_source": self._store.count_by_source(),
         }

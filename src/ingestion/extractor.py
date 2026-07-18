@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Iterator
@@ -81,7 +82,7 @@ def _build_heading_breadcrumbs(doc: DoclingDocument) -> dict[str, list[str]]:
     return crumbs
 
 
-def extract(doc: DoclingDocument, source: str = "") -> ExtractedDocument:
+def extract(doc: DoclingDocument, source: str = "", deep: bool = False) -> ExtractedDocument:
     result = ExtractedDocument(source=source, page_count=0)
 
     try:
@@ -147,6 +148,10 @@ def extract(doc: DoclingDocument, source: str = "") -> ExtractedDocument:
         ))
 
     _enrich_tables_with_pdfplumber(result, source)
+
+    if deep:
+        _enrich_tables_with_camelot(result, source)
+        _enrich_with_unstructured(result, source)
 
     return result
 
@@ -220,6 +225,60 @@ def _enrich_tables_with_pdfplumber(result: ExtractedDocument, source: str) -> No
                     caption=None,
                 ))
                 rt_idx += 1
+
+
+def _enrich_tables_with_camelot(result: ExtractedDocument, source: str) -> None:
+    path = Path(source)
+    if not path.exists() or path.suffix.lower() != ".pdf":
+        return
+    try:
+        import camelot
+    except ImportError:
+        return
+
+    for t in result.tables:
+        if not _is_suspicious_table(t):
+            continue
+        if t.page is None or t.page < 1:
+            continue
+        try:
+            tables = camelot.read_pdf(str(path), pages=str(t.page), flavor="lattice")
+            if not tables:
+                tables = camelot.read_pdf(str(path), pages=str(t.page), flavor="stream")
+            if tables:
+                md = tables[0].df.to_markdown(index=False)
+                if md:
+                    t.markdown = md
+        except Exception:
+            pass
+
+
+def _enrich_with_unstructured(result: ExtractedDocument, source: str) -> None:
+    path = Path(source)
+    if not path.exists() or path.suffix.lower() != ".pdf":
+        return
+    try:
+        from unstructured.partition.pdf import partition_pdf
+    except ImportError:
+        return
+
+    t0 = time.time()
+    try:
+        elements = partition_pdf(str(path), strategy="fast", include_page_breaks=True)
+    except Exception:
+        return
+
+    for el in elements:
+        cat = getattr(el, "category", None)
+        if cat == "Formula":
+            page = getattr(el.metadata, "page_number", None)
+            text = el.text.strip() if hasattr(el, "text") and el.text else ""
+            if not text or page is None:
+                continue
+            for tx in result.texts:
+                if tx.page == page and "formula" in tx.label.lower() and not tx.text.strip():
+                    tx.text = text
+                    break
 
 
 def text_by_label(result: ExtractedDocument, label: str) -> list[ExtractedText]:

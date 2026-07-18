@@ -72,7 +72,7 @@ def convert(
         return ConversionOutput(
             document=None,
             source=str(source),
-            profile=profile_name,okey
+            profile=profile_name,
             duration_seconds=duration,
             error="Conversion returned no document",
         )
