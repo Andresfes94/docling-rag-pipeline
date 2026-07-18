@@ -498,11 +498,241 @@ git add -A
 git commit -m "Initial commit — Docling RAG pipeline with hybrid extraction"
 ```
 
-To push to GitHub:
+### GitHub setup — full transcript
+
+Below is a step-by-step account of connecting this repo to GitHub, including
+all auth challenges encountered and how they were resolved.
+
+#### 1. Install GitHub CLI
+
+`gh` was not installed. Installed via Homebrew:
+
+```bash
+brew install gh
+```
+
+Output:
+```
+==> Caveats
+zsh completions have been installed to:
+  /opt/homebrew/share/zsh/site-functions
+```
+
+#### 2. Check auth status
+
+```bash
+gh auth status
+```
+
+Output:
+```
+You are not logged into any GitHub hosts. To log in, run: gh auth login
+```
+
+#### 3. Web-based auth login
+
+```bash
+gh auth login --web
+```
+
+Prompted:
+```
+! First copy your one-time code: 2710-2270
+Open this URL to continue in your web browser: https://github.com/login/device
+```
+
+This timed out waiting for browser interaction. The token was never issued.
+
+#### 4. Auth via device flow (second attempt)
+
+```bash
+gh auth login -h github.com --scopes "repo,workflow"
+```
+
+Same device-code flow — also timed out waiting for browser.
+
+#### 5. Check for existing credentials
+
+```bash
+# macOS keychain
+security find-internet-password -s github.com
+# → No entry
+
+# gh config
+cat ~/.config/gh/config.yml
+# → No file
+
+# git credential helper
+echo "protocol=https\nhost=github.com\n" | git credential-osxkeychain get
+# → No credentials
+```
+
+No pre-existing GitHub credentials were found on the machine.
+
+#### 6. User runs `gh auth login --web` in their terminal
+
+The user opened a separate terminal and ran:
+```bash
+gh auth login --web
+```
+
+After completing the browser OAuth flow, the CLI confirmed:
+
+```
+✓ Logged in to github.com account Andresfes94 (keyring)
+- Active account: true
+- Git operations protocol: ssh
+- Token: gho_************************************
+- Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo'
+```
+
+**Note on token security**: The token is stored in the macOS Keychain
+(`keyring` provider), not in plaintext on disk. `gh` encrypts it using
+the OS credential store, equivalent to how `git credential-osxkeychain`
+stores HTTPS passwords.
+
+#### 7. Create the GitHub repo
 
 ```bash
 gh repo create docling-rag-pipeline --public --source=. --remote=origin --push
-# or manually:
-git remote add origin git@github.com:<username>/docling-rag-pipeline.git
+```
+
+Output:
+```
+https://github.com/Andresfes94/docling-rag-pipeline
+Host key verification failed.
+fatal: Could not read from remote repository.
+```
+
+The repo was **created** on GitHub but **push failed** because:
+- `gh` configured the remote as SSH (`git operations protocol: ssh`)
+- The SSH host key for `github.com` was not in `~/.ssh/known_hosts`
+- The user's SSH public key (`~/.ssh/id_ed25519`) was not added to their
+  GitHub account settings
+
+#### 8. Attempt SSH fix — add host key
+
+```bash
+ssh-keyscan github.com >> ~/.ssh/known_hosts
 git push -u origin main
 ```
+
+Output:
+```
+git@github.com: Permission denied (publickey).
+fatal: Could not read from remote repository.
+```
+
+The host key was now trusted, but the SSH **authentication key** was not
+registered with GitHub. The key exists on disk:
+```
+~/.ssh/id_ed25519
+~/.ssh/id_ed25519.pub
+```
+
+But the agent had no identities loaded:
+```bash
+ssh-add -l
+# → The agent has no identities.
+```
+
+#### 9. Switch to HTTPS with token-based auth
+
+Switched the remote from SSH to HTTPS and used the `gh` token directly:
+
+```bash
+TOKEN=$(gh auth token)
+git remote set-url origin "https://Andresfes94:${TOKEN}@github.com/Andresfes94/docling-rag-pipeline.git"
+git push -u origin main
+```
+
+**Authentication method**: The token is passed via the URL
+(`https://username:token@github.com/...`). This is equivalent to Basic Auth.
+The token is never written to a file — it stays in memory (shell variable).
+
+#### 10. First push — blocked by workflow scope
+
+Push output:
+```
+To https://github.com/Andresfes94/docling-rag-pipeline.git
+ ! [remote rejected] main -> main (refusing to allow an OAuth App to
+   create or update workflow `.github/workflows/ci.yml` without
+   `workflow` scope)
+error: failed to push some refs to 'https://...'
+```
+
+**Why**: GitHub requires the explicit `workflow` OAuth scope to push files
+under `.github/workflows/`. The token had `repo` (read/write code) but not
+`workflow`.
+
+#### 11. Work around — push without workflow file first
+
+```bash
+git rm --cached .github/workflows/ci.yml
+git commit --amend --no-edit
+git push -u origin main
+```
+
+This succeeded — the code, viewer, tests, and all source files were pushed.
+Only the CI workflow file was held back.
+
+#### 12. Grant workflow scope to the token
+
+The user ran in their terminal:
+```bash
+gh auth refresh -h github.com -s workflow
+```
+
+Followed the device-code browser flow. After completion:
+
+```
+✓ Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'
+```
+
+The `workflow` scope was now added.
+
+#### 13. Re-push with refreshed token
+
+```bash
+git add .github/workflows/ci.yml
+git commit -m "Add GitHub Actions CI workflow"
+TOKEN=$(gh auth token)
+git remote set-url origin "https://x-access-token:${TOKEN}@github.com/Andresfes94/docling-rag-pipeline.git"
+git push origin main
+```
+
+This succeeded:
+```
+To https://github.com/Andresfes94/docling-rag-pipeline.git
+   018abbd..df84840  main -> main
+```
+
+#### 14. Final repo state
+
+```
+https://github.com/Andresfes94/docling-rag-pipeline
+
+Branch: main (2 commits)
+├── [018abbd] Remove large data files from tracking, update .gitignore
+└── [df84840] Add GitHub Actions CI workflow
+
+43 source files tracked (source code, tests, config, docs)
+Large binary files excluded via .gitignore:
+  data/sample/*      — PDFs and Excel test files (~54 MB)
+  data/output/*      — Conversion artifacts (JSON, MD, TXT, doctags)
+  data/chroma/*      — Vector store (SQLite + embeddings)
+  data/staging/      — Batch processing temporary files
+```
+
+#### Key takeaways on GitHub credential management
+
+| Method | Storage | Security |
+|---|---|---|
+| `gh auth login` | macOS Keychain (encrypted) | ✅ Token encrypted at rest |
+| URL-embedded token | Shell variable (memory) | ⚠️ Visible in `ps` on multi-user systems |
+| `git credential-osxkeychain` | macOS Keychain | ✅ Standard git approach |
+| SSH key (`id_ed25519`) | Disk (`~/.ssh/`) | ✅ Requires passphrase + `ssh-add` |
+
+**Recommendation**: For production, use `gh auth setup-git` which configures
+git to use the `gh` CLI as a credential helper — no tokens in URLs, no
+plaintext storage.
