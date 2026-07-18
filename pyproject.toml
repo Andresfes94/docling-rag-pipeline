@@ -1,0 +1,55 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "docling-rag-pipeline"
+version = "0.1.0"
+description = "Docling-based RAG ingestion pipeline with configurable profiles"
+requires-python = ">=3.10"
+dependencies = [
+    "docling>=2.81.0",
+    "docling-core>=2.67.1",
+    "sentence-transformers>=2.2.0",
+    "chromadb>=0.4.0",
+    "fastapi>=0.100.0",
+    "uvicorn>=0.23.0",
+    "pyyaml>=6.0",
+    "pydantic>=2.0",
+    "httpx>=0.24.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-asyncio>=0.21.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0",
+]
+vlm = [
+    "torch>=2.0",
+    "transformers>=4.36.0",
+    "accelerate>=0.25.0",
+]
+mlx = [
+    "mlx>=0.10.0",
+    "mlx-lm>=0.10.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

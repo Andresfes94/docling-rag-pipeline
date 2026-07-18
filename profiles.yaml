@@ -1,0 +1,78 @@
+profiles:
+  standard:
+    description: "Fast path for born-digital PDFs. No OCR, table structure enabled."
+    pipeline: standard
+    options:
+      do_ocr: false
+      do_table_structure: true
+
+  fast:
+    description: "Fastest possible — no OCR, no table detection. Use for large born-digital PDFs."
+    pipeline: standard
+    options:
+      do_ocr: false
+      do_table_structure: false
+
+  large_document:
+    description: "Optimized for 150+ page PDFs. No OCR, no table detection for speed."
+    pipeline: standard
+    options:
+      do_ocr: false
+      do_table_structure: false
+
+  ocr_easyocr:
+    description: "Standard pipeline with EasyOCR. Good for scanned PDFs."
+    pipeline: standard
+    options:
+      do_ocr: true
+      ocr_engine: easyocr
+      ocr_lang: ["en"]
+      do_table_structure: true
+
+  ocr_tesseract:
+    description: "Standard pipeline with Tesseract OCR. Requires system tesseract + pip install tesserocr."
+    pipeline: standard
+    options:
+      do_ocr: true
+      ocr_engine: tesseract
+      do_table_structure: true
+
+  ocrmac:
+    description: "Standard pipeline with macOS native Vision OCR. 2-3x faster than EasyOCR on Apple Silicon."
+    pipeline: standard
+    options:
+      do_ocr: true
+      ocr_engine: ocrmac
+      do_table_structure: true
+
+  ocr_rapid:
+    description: "Standard pipeline with RapidOCR. Lightweight, no C dependencies."
+    pipeline: standard
+    options:
+      do_ocr: true
+      ocr_engine: rapidocr
+      do_table_structure: true
+
+  vlm_granite:
+    description: "VLM pipeline with GraniteDocling via HF Transformers (GPU). Best for complex layouts, handwriting, formulas."
+    pipeline: vlm
+    options:
+      vlm_model: granite_docling
+      generate_page_images: true
+
+  vlm_smoldocling:
+    description: "VLM pipeline with SmolDocling (lighter model)."
+    pipeline: vlm
+    options:
+      vlm_model: smoldocling
+      generate_page_images: true
+
+  vlm_remote:
+    description: "VLM pipeline with remote OpenAI-compatible endpoint (vLLM, LM Studio, Ollama)."
+    pipeline: vlm
+    options:
+      vlm_model: remote
+      remote_url: "http://localhost:8000/v1/chat/completions"
+      remote_model: "ibm-granite/granite-docling-258M"
+      remote_max_tokens: 4096
+      generate_page_images: true
