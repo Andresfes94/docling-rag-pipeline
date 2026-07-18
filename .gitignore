@@ -14,5 +14,7 @@ build/
 data/output/*
 data/chroma/*
 data/staging/
+data/sample/*
 !data/output/.gitkeep
 !data/chroma/.gitkeep
+!data/sample/.gitkeep
