@@ -28,206 +28,253 @@ A modular, production-ready **RAG ingestion pipeline** built with [Docling](http
 
 ---
 
-## Quick Start
+## Installation
 
-### Prerequisites
+### System Requirements
 
-This project uses a **conda environment** (`developer`) with Python 3.11.5 and all dependencies pre-installed.
+| Requirement | Minimum | Recommended |
+|---|---|---|
+| **Python** | 3.10 | 3.11 |
+| **RAM** | 4 GB | 8 GB+ (for OCR / VLM) |
+| **Disk** | 2 GB (dependencies) | 10 GB+ (documents + vector store) |
+| **OS** | Linux, macOS, Windows (WSL2) | macOS (Apple Silicon) or Linux (GPU) |
+| **GPU** | None (CPU-only works) | NVIDIA GPU or Apple MPS |
+
+---
+
+### 1. Local Installation (pip)
+
+#### A. Standard virtual environment
 
 ```bash
-# Activate the environment
-conda activate developer
+# Clone the repository
+git clone https://github.com/Andresfes94/docling-rag-pipeline.git
+cd docling-rag-pipeline
 
-# Or run individual commands without activating:
-conda run -n developer python scripts/run.py --help
+# Create and activate a virtual environment
+python3 -m venv venv
+source venv/bin/activate          # Linux / macOS
+# venv\Scripts\activate           # Windows (WSL2)
+
+# Upgrade pip
+pip install --upgrade pip
+
+# Install all dependencies (core + optional + dev)
+pip install -r requirements.txt
+
+# Install the package itself (editable mode for development)
+pip install -e .
 ```
 
-### Document Ingestion & Retrieval
+#### B. Conda environment
 
 ```bash
-# Detect document type (pre-scan for classification)
-conda run -n developer python scripts/run.py detect mydocument.pdf
-
-# Ingest a document with auto-detection (recommended)
-conda run -n developer python scripts/run.py ingest mydocument.pdf --profile auto
-
-# Ingest from URL
-conda run -n developer python scripts/run.py ingest https://arxiv.org/pdf/2408.09869 --profile standard
-
-# Ingest with deep enrichment (Camelot + Unstructured fallback)
-conda run -n developer python scripts/run.py ingest mydocument.pdf --profile standard --deep
-
-# Batch process multiple documents in parallel
-conda run -n developer python scripts/run.py ingest-batch doc1.pdf doc2.pdf doc3.pdf --workers 7
-
-# Search ingested documents
-conda run -n developer python scripts/run.py retrieve "option pricing greeks" --k 5
-
-# List available pipeline profiles
-conda run -n developer python scripts/run.py list-profiles
+conda create -n docling-rag python=3.11
+conda activate docling-rag
+pip install -r requirements.txt
+pip install -e .
 ```
 
-### Interactive Chat (RAG + LLM)
+#### C. Optional dependency groups
 
-Ask questions against your ingested documents using a local LLM (Ollama):
+| Group | Packages | When you need it |
+|---|---|---|
+| **Deep Enrichment** | `pdfplumber`, `camelot-py[base]`, `unstructured[pdf]`, `tabulate` | Using `--deep` flag for table/formula enrichment |
+| **VLM Pipeline** | `torch`, `transformers`, `accelerate` | Using `vlm_granite` or `vlm_smoldocling` profiles |
+| **Apple MLX** | `mlx`, `mlx-lm` | Running Docling on Apple Silicon with MLX acceleration |
+| **Dev / Testing** | `pytest`, `pytest-asyncio`, `ruff`, `mypy` | Running tests or type-checking |
 
+Install extras with:
 ```bash
-# Interactive chat with default model (llama3.2)
-conda run -n developer python scripts/chat.py
+# All extras
+pip install -r requirements.txt
 
-# Chat with a specific model
-conda run -n developer python scripts/chat.py --model deepseek-r1:8b
-
-# Chat with LM Studio provider instead of Ollama
-conda run -n developer python scripts/chat.py --provider lmstudio --model local-model
+# Individual groups
+pip install pdfplumber camelot-py[base] unstructured[pdf] tabulate
+pip install torch transformers accelerate
 ```
 
-The chat script:
-1. Takes your question
-2. Retrieves the top-k relevant chunks from Chroma
-3. Assembles them into an LLM context block
-4. Sends to the LLM with a system prompt instructing it to answer from context only
-5. Returns the answer with source citations
+#### D. System dependencies
 
-### RAG Evaluation
+Some optional libraries require system packages:
 
-Measure how well your RAG pipeline performs across 20 curated test questions:
+| Library | macOS (Homebrew) | Linux (apt) |
+|---|---|---|
+| **Poppler** (Unstructured) | `brew install poppler` | `sudo apt install poppler-utils` |
+| **Ghostscript** (Camelot) | `brew install ghostscript` | `sudo apt install ghostscript` |
+| **Tesseract** (Tesseract OCR) | `brew install tesseract` | `sudo apt install tesseract-ocr` |
+
+These are **optional** — the pipeline works without them. Missing libraries are caught gracefully at runtime with `ImportError` handling.
+
+---
+
+### 2. Docker Deployment
+
+#### Build and run the API service
 
 ```bash
-# Run full evaluation (requires Ollama running with llama3.2)
-conda run -n developer python scripts/evaluate_rag.py --model llama3.2 --k 5
+# Build the image (multi-stage, ~5 min first build)
+docker compose build
 
-# Save detailed results to JSON
-conda run -n developer python scripts/evaluate_rag.py --model llama3.2 --k 5 --output eval_results.json
+# Start the API server
+docker compose up
 
-# Evaluate with a different model
-conda run -n developer python scripts/evaluate_rag.py --model deepseek-r1:8b --k 5
+# Run in detached mode
+docker compose up -d
 
-# Quiet mode (suppress per-question output, only show summary)
-conda run -n developer python scripts/evaluate_rag.py --model llama3.2 --k 5 --quiet
+# Follow logs
+docker compose logs -f
 ```
 
-**What gets measured:**
+The API is available at `http://localhost:8000`. OpenAPI docs at `http://localhost:8000/docs`.
 
-| Metric | What it tells you |
-|---|---|
-| `overall_accuracy` | % of questions answered correctly |
-| `factual_accuracy` | Can the RAG pipeline recall specific facts from documents? |
-| `synthesis_accuracy` | Can it combine information across multiple chunks? |
-| `out_of_context_rejection_rate` | Does it correctly refuse questions not in the documents? |
-| `attribution_accuracy` | Does it cite sources when asked about specific document content? |
-| `avg_keyword_coverage` | What fraction of expected keywords appear in answers? |
-| `citation_rate` | How often does the LLM cite source/page in its answers? |
-| `avg_latency_s` | End-to-end time per question (retrieval + LLM generation) |
-| `avg_tokens_per_response` | LLM token consumption per answer |
+#### Docker volumes
 
-### API Server
+The `docker-compose.yml` mounts three volumes for persistence and live config:
+
+| Host path | Container path | Purpose |
+|---|---|---|
+| `./data` | `/app/data` | Persistent vector store (Chroma), conversion artifacts |
+| `./profiles.yaml` | `/app/profiles.yaml` | Live pipeline profile configuration |
+| `./scripts/docling-evaluate.py` | `/app/scripts/docling-evaluate.py` | Quality evaluator script |
+
+#### Build only (without docker-compose)
 
 ```bash
-# Start the FastAPI server
-conda run -n developer uvicorn src.api.server:app --reload --port 8000
-
-# OpenAPI docs: http://localhost:8000/docs
+docker build -t docling-rag-pipeline .
+docker run -p 8000:8000 \
+  -v "$(pwd)/data:/app/data" \
+  -v "$(pwd)/profiles.yaml:/app/profiles.yaml" \
+  docling-rag-pipeline
 ```
 
-#### `/health` — Health check
+---
+
+### 3. LLM Setup (for Chat & Evaluation)
+
+The LLM features (`scripts/chat.py`, `scripts/evaluate_rag.py`) require a local LLM server. Choose one:
+
+#### A. Ollama (recommended)
+
 ```bash
+# Install Ollama
+curl -fsSL https://ollama.com/install.sh | sh   # Linux
+brew install ollama                               # macOS
+
+# Start the Ollama service
+ollama serve
+
+# In a separate terminal, pull a model
+ollama pull llama3.2
+ollama pull deepseek-r1:8b
+ollama pull mistral
+
+# Verify
+ollama list
+```
+
+The chat scripts connect to `http://localhost:11434` by default.
+
+#### B. LM Studio
+
+1. Download from [lmstudio.ai](https://lmstudio.ai)
+2. Download a model (e.g., Llama 3.2, DeepSeek R1)
+3. Start the local inference server on port 1234
+4. Use `--provider lmstudio` when running chat/evaluation scripts
+
+#### C. Verify LLM connection
+
+```bash
+python -c "from src.llm.client import LLMClient; c = LLMClient(); print('Ollama available:', c.check_available())"
+```
+
+---
+
+### 4. Verify Installation
+
+```bash
+# CLI works
+python scripts/run.py --help
+python scripts/run.py list-profiles
+
+# Run the test suite (26 tests)
+python -m pytest tests/ -v
+
+# Start the API server
+uvicorn src.api.server:app --port 8000
+
+# Health check (in another terminal)
 curl http://localhost:8000/health
 # → {"status": "ok"}
 ```
 
-#### `/ingest` — Async document ingestion
-```bash
-# Submit an ingest task (returns immediately with task_id)
-curl -X POST http://localhost:8000/ingest \
-  -H "Content-Type: application/json" \
-  -d '{"source": "report.pdf", "profile": "standard", "deep": true}'
-# → {"task_id": "abc123", "source": "report.pdf", "status": "pending", ...}
+---
 
-# Poll task status
-curl http://localhost:8000/ingest/abc123
-# → {"task_id": "abc123", "status": "done", "pages": 30, "chunks": 25, ...}
-```
+## Quick Start
 
-#### `/retrieve` — Semantic search
-```bash
-# Standard JSON response
-curl -X POST http://localhost:8000/retrieve \
-  -H "Content-Type: application/json" \
-  -d '{"query": "option pricing greeks", "k": 5}'
+Once installed, here's the typical workflow:
 
-# LLM-friendly context assembly (ready to inject into a prompt)
-curl -X POST http://localhost:8000/retrieve \
-  -H "Content-Type: application/json" \
-  -d '{"query": "backtesting platforms", "k": 3, "format": "llm"}'
-# → {"context": "[1] Source: ... | Page: 53 | Section: Summary\n...\n\n---\n\n[2] ...", ...}
-
-# With filters (source, page range, minimum score)
-curl -X POST http://localhost:8000/retrieve \
-  -H "Content-Type: application/json" \
-  -d '{"query": "risk management", "sources": ["quant.pdf"], "page_range": [1, 100], "min_score": 0.5}'
-```
-
-#### `/retrieve/stream` — SSE streaming (real-time LLM consumption)
-```bash
-curl -N http://localhost:8000/retrieve/stream?query=greeks&k=3&format=llm
-# → event: meta
-#   data: {"total": 3, "format": "llm"}
-# → event: chunk
-#   data: [1] Source: ... | Page: 210 | Section: Greeks\n| option | time to expiry | ...
-# → event: done
-#   data: {}
-```
-
-#### `/documents` — Document management
-```bash
-# List all ingested documents
-curl http://localhost:8000/documents
-
-# Get document details (chunk count, pages, profiles used)
-curl http://localhost:8000/documents/report.pdf
-
-# Delete a document (removes all chunks from Chroma)
-curl -X DELETE http://localhost:8000/documents/report.pdf
-```
-
-#### `/status` — Pipeline status
-```bash
-curl http://localhost:8000/status
-# → {"document_count": 2188, "sources": [...], "chunk_count_by_source": {...}, "cache_entries": 3}
-```
-
-### LLM Integration Example
-
-```python
-import httpx
-
-# 1. Retrieve context formatted for an LLM
-resp = httpx.post("http://localhost:8000/retrieve", json={
-    "query": "what is the black-scholes model",
-    "k": 5,
-    "format": "llm",
-})
-data = resp.json()
-context = data["context"]
-
-# 2. Build prompt with retrieved context
-prompt = f"""You are a financial analyst. Answer the question using ONLY the context below.
-
-Context:
-{context}
-
-Question: What is the Black-Scholes model and how is it used for option pricing?"""
-
-# 3. Send to any LLM (local or remote)
-# response = openai.chat.completions.create(model="...", messages=[{"role": "user", "content": prompt}])
-```
-
-### Docker
+### Ingest a document
 
 ```bash
-docker compose build
-docker compose up
+# Auto-detect document type and ingest
+python scripts/run.py ingest mydocument.pdf --profile auto
+
+# Ingest with deep enrichment (Camelot + Unstructured fallback)
+python scripts/run.py ingest mydocument.pdf --profile standard --deep
+
+# Ingest from URL
+python scripts/run.py ingest https://arxiv.org/pdf/2408.09869 --profile standard
+
+# Batch process multiple files in parallel
+python scripts/run.py ingest-batch doc1.pdf doc2.pdf doc3.pdf --workers 4
+```
+
+### Search ingested content
+
+```bash
+# Search
+python scripts/run.py retrieve "option pricing greeks" --k 5
+```
+
+### Interactive RAG chat
+
+```bash
+# Requires Ollama running with llama3.2
+python scripts/chat.py
+
+# With a specific model
+python scripts/chat.py --model deepseek-r1:8b
+
+# With LM Studio
+python scripts/chat.py --provider lmstudio --model local-model
+```
+
+### Run the RAG evaluation
+
+```bash
+# 20-question evaluation against your vector store
+python scripts/evaluate_rag.py --model llama3.2 --k 5
+
+# Save results
+python scripts/evaluate_rag.py --model llama3.2 --k 5 --output eval_results.json
+```
+
+### Launch the Streamlit UIs
+
+```bash
+# Document viewer (original PDF vs extracted text side-by-side)
+streamlit run scripts/viewer.py
+
+# Library comparison viewer (Docling, pdfplumber, Camelot, Unstructured)
+streamlit run scripts/comparison_viewer.py
+```
+
+### Start the API server
+
+```bash
+uvicorn src.api.server:app --reload --port 8000
+# OpenAPI docs: http://localhost:8000/docs
 ```
 
 ---
@@ -240,10 +287,10 @@ Ingest financial/technical documents, then ask questions with automatic context 
 
 ```bash
 # Ingest your documents
-conda run -n developer python scripts/run.py ingest report.pdf --profile auto
+python scripts/run.py ingest report.pdf --profile auto
 
 # Chat interactively
-conda run -n developer python scripts/chat.py
+python scripts/chat.py
 
 # Or use the API for programmatic access
 curl -X POST http://localhost:8000/retrieve \
@@ -257,7 +304,7 @@ Before deploying a new document corpus, run the evaluation suite to catch regres
 
 ```bash
 # Run the full 20-question evaluation
-conda run -n developer python scripts/evaluate_rag.py --model llama3.2 --k 5 --output eval_results.json
+python scripts/evaluate_rag.py --model llama3.2 --k 5 --output eval_results.json
 
 # Check accuracy threshold (script exits with code 1 if accuracy < 50%)
 echo $?
@@ -268,7 +315,7 @@ echo $?
 Compare how different libraries extract the same PDF page:
 
 ```bash
-conda run -n developer streamlit run scripts/comparison_viewer.py
+streamlit run scripts/comparison_viewer.py
 ```
 
 Useful for:
@@ -282,7 +329,7 @@ Process large document collections in parallel:
 
 ```bash
 # Process all PDFs in a directory with 7 workers
-conda run -n developer python scripts/run.py ingest-batch data/sample/*.pdf --workers 7
+python scripts/run.py ingest-batch data/sample/*.pdf --workers 4
 
 # Each worker runs in its own process with isolated conversion
 # Results are staged to disk, then batch-imported to Chroma
@@ -294,7 +341,7 @@ The quality evaluator can be used in CI to reject poor conversions:
 
 ```bash
 # Evaluate a conversion
-conda run -n developer python scripts/docling-evaluate.py data/output/document.json \
+python scripts/docling-evaluate.py data/output/document.json \
   --markdown data/output/document.md
 
 # Exit code indicates pass/warn/fail — enforce in CI pipeline
@@ -452,13 +499,13 @@ profiles.yaml ──► loader.py ──► extractor.py ──► chunker.py �
 
 ```bash
 # Run all tests
-conda run -n developer python -m pytest tests/ -v
+python -m pytest tests/ -v
 
 # Run specific test file
-conda run -n developer python -m pytest tests/test_api.py -v
+python -m pytest tests/test_api.py -v
 
 # Run with coverage
-conda run -n developer python -m pytest tests/ --cov=src
+python -m pytest tests/ --cov=src
 ```
 
 All 26 tests pass: profile loading (8), quality evaluation (5), API endpoints (14 async tests).
@@ -470,7 +517,7 @@ All 26 tests pass: profile loading (8), quality evaluation (5), API endpoints (1
 A Streamlit UI that lets you browse ingested documents and compare original pages with extracted text side-by-side.
 
 ```bash
-conda run -n developer streamlit run scripts/viewer.py
+streamlit run scripts/viewer.py
 ```
 
 **Features:**
@@ -490,7 +537,7 @@ conda run -n developer streamlit run scripts/viewer.py
 A Streamlit app that compares how all 4 extraction libraries handle the same PDF page — with **timing** and **accuracy scores**.
 
 ```bash
-conda run -n developer streamlit run scripts/comparison_viewer.py
+streamlit run scripts/comparison_viewer.py
 ```
 
 **Features:**
