@@ -14,7 +14,8 @@ from src.ingestion.quality import QualityReport, evaluate
 from src.ingestion.detector import detect
 from src.ingestion.cleaner import TextCleaner
 from src.retrieval.reranker import CrossEncoderReranker
-from src.storage.vector_store import VectorStore, RetrievalResult
+from src.retrieval.hybrid_search import BM25Retriever, HybridRetriever
+from src.storage.vector_store import RetrievedChunk, VectorStore, RetrievalResult
 
 _log = logging.getLogger(__name__)
 
@@ -51,6 +52,8 @@ class RAGPipeline:
         auto_retry: bool = True,
         cleaner: TextCleaner | None = None,
         reranker: CrossEncoderReranker | None = None,
+        bm25_retriever: BM25Retriever | None = None,
+        hybrid_retriever: HybridRetriever | None = None,
     ):
         self._embedding_model = embedding_model
         self._chunk_max_tokens = chunk_max_tokens
@@ -61,6 +64,8 @@ class RAGPipeline:
         self._auto_retry = auto_retry
         self._cleaner = cleaner or TextCleaner()
         self._reranker = reranker
+        self._bm25 = bm25_retriever
+        self._hybrid = hybrid_retriever
         self._store = VectorStore(
             persist_directory=persist_directory,
             collection_name=collection_name,
@@ -243,38 +248,118 @@ class RAGPipeline:
         where: dict | None = None,
         rerank: bool = True,
         min_rerank_score: float | None = None,
+        use_hybrid: bool = False,
     ) -> RetrievalResult:
-        initial_k = k * 3 if (rerank and self._reranker) else k
+        fetch_k = k * 3 if (rerank and self._reranker) else k
+
+        if use_hybrid and self._bm25 and self._hybrid:
+            return self._hybrid_retrieve(query, k, fetch_k, where, rerank, min_rerank_score)
+
         result = self._store.query(
             query_text=query,
-            k=initial_k,
+            k=fetch_k,
             model_name=self._embedding_model,
             where=where,
         )
 
         if rerank and self._reranker and result.results:
-            reranked = self._reranker.rerank(
-                query=query,
-                chunks=result.results,
-                keep=k,
-                min_score=min_rerank_score,
-            )
-            reranked_chunks = [
-                RetrievedChunk(
-                    text=r["chunk"].text,
-                    contextualized_text=r["chunk"].contextualized_text,
-                    score=r["score"],
-                    metadata=r["chunk"].metadata if hasattr(r["chunk"], "metadata") else {},
-                )
-                for r in reranked
-            ]
-            return RetrievalResult(
-                query=query,
-                results=reranked_chunks,
-                total_results=len(reranked_chunks),
-            )
+            return self._apply_reranker(query, result.results, k, min_rerank_score)
 
         return result
+
+    def _hybrid_retrieve(
+        self,
+        query: str,
+        k: int,
+        fetch_k: int,
+        where: dict | None,
+        rerank: bool,
+        min_rerank_score: float | None,
+    ) -> RetrievalResult:
+        from src.embeddings.embedder import embed_text
+
+        if self._bm25._bm25 is None:
+            self.rebuild_bm25_index()
+
+        query_embedding = embed_text(query, model_name=self._embedding_model)
+        vector_raw = self._store._collection.query(
+            query_embeddings=[query_embedding.tolist()],
+            n_results=fetch_k,
+            where=where,
+        )
+
+        vector_results: list[dict] = []
+        if vector_raw["ids"] and vector_raw["ids"][0]:
+            for i in range(len(vector_raw["ids"][0])):
+                vector_results.append({
+                    "index": i,
+                    "id": vector_raw["ids"][0][i] if vector_raw["ids"] else "",
+                    "text": vector_raw["documents"][0][i] if vector_raw["documents"] else "",
+                    "metadata": vector_raw["metadatas"][0][i] if vector_raw["metadatas"] else {},
+                    "score": 1.0 - vector_raw["distances"][0][i] if vector_raw["distances"] else 0.0,
+                })
+
+        bm25_results = self._bm25.search(query, k=fetch_k)
+        fused = self._hybrid.fuse_reciprocal_rank(vector_results, bm25_results, k=fetch_k)
+
+        hybrid_chunks: list[RetrievedChunk] = []
+        for entry in fused:
+            idx = entry["index"]
+            if idx < len(vector_results):
+                r = vector_results[idx]
+                hybrid_chunks.append(RetrievedChunk(
+                    text=r.get("text", ""),
+                    contextualized_text=r.get("text", ""),
+                    score=entry["rrf_score"],
+                    metadata=r.get("metadata", {}),
+                ))
+
+        if rerank and self._reranker and hybrid_chunks:
+            return self._apply_reranker(query, hybrid_chunks, k, min_rerank_score)
+
+        return RetrievalResult(
+            query=query,
+            results=hybrid_chunks[:k],
+            total_results=len(hybrid_chunks[:k]),
+        )
+
+    def _apply_reranker(
+        self,
+        query: str,
+        chunks: list[RetrievedChunk],
+        keep: int,
+        min_score: float | None,
+    ) -> RetrievalResult:
+        reranked = self._reranker.rerank(
+            query=query,
+            chunks=chunks,
+            keep=keep,
+            min_score=min_score,
+        )
+        reranked_chunks = [
+            RetrievedChunk(
+                text=r["chunk"].text,
+                contextualized_text=r["chunk"].contextualized_text,
+                score=r["score"],
+                metadata=r["chunk"].metadata if hasattr(r["chunk"], "metadata") else {},
+            )
+            for r in reranked
+        ]
+        return RetrievalResult(
+            query=query,
+            results=reranked_chunks,
+            total_results=len(reranked_chunks),
+        )
+
+    def rebuild_bm25_index(self) -> None:
+        if self._bm25 is None:
+            return
+        chunks = self._store.get_all_chunks()
+        if chunks:
+            self._bm25.build_index(chunks, text_key="text")
+            _log.info("BM25 index rebuilt with %d chunks", len(chunks))
+        else:
+            _log.info("No chunks in store — BM25 index empty")
 
     def delete_source(self, source: str) -> int:
         return self._store.delete_source(source)

@@ -182,6 +182,20 @@ class VectorStore:
             total_results=len(retrieved),
         )
 
+    def get_all_chunks(self) -> list[dict[str, Any]]:
+        all_data = self._collection.get(include=["documents", "metadatas"])
+        chunks: list[dict[str, Any]] = []
+        ids = all_data.get("ids") or []
+        docs = all_data.get("documents") or []
+        metas = all_data.get("metadatas") or []
+        for i in range(len(ids)):
+            chunks.append({
+                "id": ids[i],
+                "text": docs[i] if i < len(docs) else "",
+                "metadata": metas[i] if i < len(metas) else {},
+            })
+        return chunks
+
     def document_count(self) -> int:
         return self._collection.count()
 

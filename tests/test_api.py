@@ -135,6 +135,20 @@ class TestAPI:
         data = resp.json()
         assert "total_results" in data
 
+    @pytest.mark.parametrize("hybrid", [True, False])
+    async def test_retrieve_with_hybrid(self, client, hybrid):
+        resp = await client.post("/retrieve", json={
+            "query": "test", "k": 3, "use_hybrid": hybrid,
+        })
+        assert resp.status_code == 200
+
+    @pytest.mark.parametrize("hybrid", [True, False])
+    async def test_retrieve_stream_with_hybrid(self, client, hybrid):
+        resp = await client.get("/retrieve/stream", params={
+            "query": "test", "k": 3, "use_hybrid": hybrid,
+        })
+        assert resp.status_code == 200
+
     async def test_rate_limit_headers(self, client):
         resp = await client.get("/status")
         assert "X-Request-ID" in resp.headers

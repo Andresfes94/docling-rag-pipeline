@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from src.retrieval.hybrid_search import BM25Retriever, HybridRetriever, _tokenize
+from src.retrieval.pipeline import RAGPipeline
+from src.storage.vector_store import RetrievedChunk
 
 
 class TestTokenize:
@@ -103,3 +105,72 @@ class TestHybridRetriever:
         fused = h.fuse_reciprocal_rank(vector_results, bm25_results, k=3)
         # Index 0 should rank higher (appears in both lists)
         assert fused[0]["index"] == 0
+
+
+class TestPipelineBM25Integration:
+    def test_rebuild_empty(self, tmp_chroma):
+        bm25 = BM25Retriever()
+        hybrid = HybridRetriever()
+        pipeline = RAGPipeline(
+            persist_directory=str(tmp_chroma),
+            bm25_retriever=bm25,
+            hybrid_retriever=hybrid,
+        )
+        pipeline.rebuild_bm25_index()
+        assert bm25._bm25 is None
+
+    def test_rebuild_after_add(self, tmp_chroma):
+        bm25 = BM25Retriever()
+        hybrid = HybridRetriever()
+        pipeline = RAGPipeline(
+            persist_directory=str(tmp_chroma),
+            bm25_retriever=bm25,
+            hybrid_retriever=hybrid,
+        )
+        chunks_data = [
+            {"text": "cat sat on mat", "id": "c1"},
+            {"text": "dogs are better than cats", "id": "c2"},
+            {"text": "finance and stock market", "id": "c3"},
+        ]
+        bm25.build_index(chunks_data)
+        assert bm25._bm25 is not None
+        results = bm25.search("cat", k=5)
+        assert len(results) >= 1
+
+    def test_hybrid_retrieve_fallback_no_index(self, tmp_chroma):
+        bm25 = BM25Retriever()
+        hybrid = HybridRetriever()
+        pipeline = RAGPipeline(
+            persist_directory=str(tmp_chroma),
+            bm25_retriever=bm25,
+            hybrid_retriever=hybrid,
+        )
+        result = pipeline.retrieve("test query", k=3, use_hybrid=True)
+        assert result is not None
+        assert result.total_results >= 0
+
+    def test_retrieve_rerank_with_hybrid_disabled(self, tmp_chroma):
+        pipeline = RAGPipeline(
+            persist_directory=str(tmp_chroma),
+        )
+        result = pipeline.retrieve("test query", k=3, use_hybrid=False)
+        assert result is not None
+
+    def test_retrieve_with_bm25_rerank_combined(self, tmp_chroma):
+        bm25 = BM25Retriever()
+        hybrid = HybridRetriever()
+        pipeline = RAGPipeline(
+            persist_directory=str(tmp_chroma),
+            bm25_retriever=bm25,
+            hybrid_retriever=hybrid,
+        )
+        result = pipeline.retrieve("test", k=3, use_hybrid=True)
+        assert result is not None
+
+    def test_retrieve_no_bm25_no_rerank(self, tmp_chroma):
+        pipeline = RAGPipeline(
+            persist_directory=str(tmp_chroma),
+        )
+        result = pipeline.retrieve("test", k=3, use_hybrid=False, rerank=False)
+        assert result is not None
+        assert result.total_results >= 0

@@ -40,6 +40,7 @@ from src.api.models import (
 from src.api.rate_limiter import RateLimiterMiddleware
 from src.retrieval.pipeline import RAGPipeline
 from src.retrieval.reranker import CrossEncoderReranker
+from src.retrieval.hybrid_search import BM25Retriever, HybridRetriever
 
 from dotenv import load_dotenv
 
@@ -63,6 +64,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_tracing()
     _log.info("RAG Pipeline API starting...")
     reranker = CrossEncoderReranker()
+    bm25 = BM25Retriever()
+    hybrid = HybridRetriever()
     app.state.pipeline = RAGPipeline(
         persist_directory=settings.chroma_persist_dir,
         embedding_model=settings.embedding_model,
@@ -71,7 +74,10 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         output_dir=settings.output_dir,
         evaluator_script=settings.evaluator_script,
         reranker=reranker,
+        bm25_retriever=bm25,
+        hybrid_retriever=hybrid,
     )
+    app.state.pipeline.rebuild_bm25_index()
     app.state.cache = RetrievalCache(capacity=settings.cache_capacity, ttl=settings.cache_ttl)
     app.state.tasks: dict[str, dict[str, Any]] = {}
     _log.info("Vector store: %d documents", app.state.pipeline.store.document_count())
@@ -224,6 +230,7 @@ def _run_ingest(
         ingest_documents_total.labels(profile=result.profile, status=status).inc()
         if result.success:
             cache.invalidate(source=source)
+            pipeline.rebuild_bm25_index()
     except Exception as exc:
         _log.exception("Background ingest failed for %s", source)
         tasks[task_id].update(status="failed", error=str(exc))
@@ -336,13 +343,11 @@ async def retrieve(
         _log.info("Cache hit for query='%s' k=%d fmt=%s", req.query[:60], req.k, req.format)
         return RetrieveResponse(**cached)
 
+    loop = asyncio.get_running_loop()
     where = _where_from_filters(req.sources, req.page_range)
-    result = pipeline.retrieve(
-        query=req.query,
-        k=req.k,
-        where=where,
-        rerank=req.rerank,
-        min_rerank_score=req.min_rerank_score,
+    result = await loop.run_in_executor(
+        None, pipeline.retrieve, req.query, req.k, where,
+        req.rerank, req.min_rerank_score, req.use_hybrid,
     )
 
     chunks = [
@@ -390,11 +395,15 @@ async def retrieve_stream(
     min_score: float | None = Query(None, ge=0.0, le=1.0, description="Minimum similarity score threshold"),
     rerank: bool = Query(True, description="Enable cross-encoder reranking"),
     min_rerank_score: float | None = Query(None, ge=0.0, le=1.0, description="Minimum reranker score"),
+    use_hybrid: bool = Query(False, description="Enable BM25 + vector hybrid search with RRF fusion"),
     pipeline: RAGPipeline = Depends(get_pipeline),
 ) -> StreamingResponse:
+    loop = asyncio.get_running_loop()
     src_list = sources.split(",") if sources else None
     where = _where_from_filters(src_list, None)
-    result = pipeline.retrieve(query=query, k=k, where=where, rerank=rerank, min_rerank_score=min_rerank_score)
+    result = await loop.run_in_executor(
+        None, pipeline.retrieve, query, k, where, rerank, min_rerank_score, use_hybrid,
+    )
 
     chunks = [
         RetrievedChunkResponse(

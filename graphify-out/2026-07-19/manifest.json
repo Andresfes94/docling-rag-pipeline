@@ -243,5 +243,10 @@
     "mtime": 1784334019.5300875,
     "ast_hash": "f112dd51c66bc1a110c011b9e4beffbc",
     "semantic_hash": ""
+  },
+  "lead-report.md": {
+    "mtime": 1784421987.9208307,
+    "ast_hash": "faf47dffac580cc6e5713c86bb60155d",
+    "semantic_hash": ""
   }
 }

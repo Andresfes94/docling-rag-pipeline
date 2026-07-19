@@ -94,6 +94,10 @@ class RetrieveRequest(BaseModel):
         description="Minimum cross-encoder reranker score threshold (0.0-1.0)",
         examples=[0.1, 0.3],
     )
+    use_hybrid: bool = Field(
+        default=False,
+        description="Enable BM25 + vector hybrid search with RRF fusion",
+    )
 
 
 class RetrievedChunkResponse(BaseModel):
