@@ -83,6 +83,17 @@ class RetrieveRequest(BaseModel):
         description="Minimum cosine similarity score threshold (0.0-1.0). Results below this are excluded.",
         examples=[0.5, 0.7],
     )
+    rerank: bool = Field(
+        default=True,
+        description="Enable cross-encoder reranking for improved result quality",
+    )
+    min_rerank_score: float | None = Field(
+        default=None,
+        ge=0.0,
+        le=1.0,
+        description="Minimum cross-encoder reranker score threshold (0.0-1.0)",
+        examples=[0.1, 0.3],
+    )
 
 
 class RetrievedChunkResponse(BaseModel):

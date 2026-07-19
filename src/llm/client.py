@@ -3,14 +3,27 @@ from __future__ import annotations
 import json
 import logging
 import time
-import urllib.request
 import urllib.error
+import urllib.request
 from typing import Any
 
 _log = logging.getLogger(__name__)
 
-OLLAMA_BASE = "http://localhost:11434"
-LMSTUDIO_BASE = "http://localhost:1234"
+import os
+
+OLLAMA_BASE = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+LMSTUDIO_BASE = os.environ.get("LMSTUDIO_BASE_URL", "http://localhost:1234")
+
+_MAX_RETRIES = 3
+_RETRY_DELAYS = [1.0, 2.0, 4.0]
+
+
+def _is_retryable(exc: Exception) -> bool:
+    if isinstance(exc, urllib.error.HTTPError):
+        return exc.code >= 500
+    if isinstance(exc, (urllib.error.URLError, TimeoutError, OSError)):
+        return True
+    return False
 
 
 class LLMClient:
@@ -96,18 +109,55 @@ class LLMClient:
             "model": self.model,
         }
 
+    def _generate_with_retry(
+        self,
+        prompt: str,
+        system: str = "",
+        temperature: float = 0.1,
+        max_tokens: int = 512,
+    ) -> dict[str, Any]:
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES + 1):
+            try:
+                if self.provider == "ollama":
+                    return self._ollama_generate(prompt, system, temperature, max_tokens)
+                return self._openai_generate(prompt, system, temperature, max_tokens)
+            except urllib.error.HTTPError as e:
+                if e.code >= 500 and attempt < _MAX_RETRIES:
+                    delay = _RETRY_DELAYS[attempt]
+                    _log.warning("LLM %s (attempt %d/%d), retrying in %.1fs…", e.code, attempt + 1, _MAX_RETRIES, delay)
+                    time.sleep(delay)
+                    last_exc = e
+                    continue
+                raise
+            except (urllib.error.URLError, TimeoutError, OSError) as e:
+                if attempt < _MAX_RETRIES:
+                    delay = _RETRY_DELAYS[attempt]
+                    _log.warning("LLM connection error (attempt %d/%d), retrying in %.1fs…", attempt + 1, _MAX_RETRIES, delay)
+                    time.sleep(delay)
+                    last_exc = e
+                    continue
+                raise
+            except json.JSONDecodeError:
+                _log.error("LLM returned invalid JSON — not retrying")
+                raise
+
+        msg = f"LLM call failed after {_MAX_RETRIES + 1} attempts"
+        _log.error(msg)
+        raise RuntimeError(msg) from last_exc
+
     def generate(self, prompt: str, system: str = "", temperature: float = 0.1, max_tokens: int = 512) -> dict[str, Any]:
-        if self.provider == "ollama":
-            result = self._ollama_generate(prompt, system, temperature, max_tokens)
-        else:
-            result = self._openai_generate(prompt, system, temperature, max_tokens)
+        import re
+
+        result = self._generate_with_retry(prompt, system, temperature, max_tokens)
 
         text = result["text"]
-        if text.startswith("<think>"):
-            end = text.find("</think>")
-            if end != -1:
-                result["thinking"] = text[7:end].strip()
-                result["text"] = text[end + 8:].strip()
+        # Strip all <think>...</think> blocks (any position, multiple occurrences)
+        blocks = re.findall(r"<think>(.*?)</think>", text, flags=re.DOTALL)
+        if blocks:
+            result["thinking"] = "\n\n".join(b.strip() for b in blocks)
+            stripped = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+            result["text"] = stripped or result["thinking"]
         return result
 
     def check_available(self) -> bool:
@@ -127,7 +177,7 @@ class LLMClient:
                 req = urllib.request.Request(f"{self.base_url}/api/tags")
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read())
-                    return [m["name"].split(":")[0] if ":" in m["name"] else m["name"] for m in data.get("models", [])]
+                    return [m["name"].removesuffix(":latest") for m in data.get("models", [])]
             else:
                 req = urllib.request.Request(f"{self.base_url}/v1/models")
                 with urllib.request.urlopen(req, timeout=5) as resp:

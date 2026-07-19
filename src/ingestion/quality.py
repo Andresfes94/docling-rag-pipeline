@@ -91,13 +91,65 @@ def evaluate(
     )
 
 
+def _count_pages(data: dict) -> int:
+    pages = data.get("pages") or []
+    if pages:
+        return len(pages)
+    seen = set()
+    for t in (data.get("texts") or []):
+        for p in (t.get("prov") or []):
+            pn = p.get("page_no") if isinstance(p, dict) else None
+            if pn is not None:
+                seen.add(pn)
+    return max(seen) if seen else 1
+
+
+def _detect_garbled(text: str) -> tuple[int, int]:
+    replacement_chars = text.count("\ufffd")
+    non_ascii_count = sum(1 for c in text if ord(c) > 127 and c not in "\ufffd\n\r\t")
+    return replacement_chars, non_ascii_count
+
+
+def _has_section_headers(texts: list[dict]) -> bool:
+    for t in texts:
+        label = t.get("label", "")
+        if isinstance(label, str) and "SECTION_HEADER" in label:
+            return True
+    return False
+
+
+def _find_duplicate_text(texts: list[dict]) -> str | None:
+    from collections import Counter
+    text_pieces = [str(t.get("text", "")).strip() for t in texts if t.get("text")]
+    if not text_pieces:
+        return None
+    counts = Counter(text_pieces)
+    most_common = counts.most_common(1)[0]
+    if most_common[1] > max(2, len(text_pieces) * 0.2):
+        return most_common[0][:80]
+    return None
+
+
+def _page_coverage(texts: list[dict], page_count: int) -> float:
+    if page_count <= 1:
+        return 1.0
+    pages_with_text: set[int] = set()
+    for t in texts:
+        for p in (t.get("prov") or []):
+            pn = p.get("page_no") if isinstance(p, dict) else None
+            if pn is not None:
+                pages_with_text.add(pn)
+    return len(pages_with_text) / page_count
+
+
 def _basic_fallback(
     json_path: Path,
     markdown_path: str | Path | None = None,
 ) -> QualityReport:
-    """Minimal quality check when the evaluator script is unavailable."""
+    """Production-grade quality check when the evaluator script is unavailable."""
     issues: list[str] = []
     actions: list[str] = []
+    metrics: dict[str, Any] = {}
 
     try:
         data = json.loads(json_path.read_text(encoding="utf-8"))
@@ -106,16 +158,60 @@ def _basic_fallback(
 
     texts = data.get("texts") or []
     tables = data.get("tables") or []
+    pictures = data.get("pictures") or []
+    page_count = _count_pages(data)
+
     total_chars = sum(len(str(t.get("text", ""))) for t in texts if isinstance(t, dict))
+    chars_per_page = total_chars / max(page_count, 1)
+    section_headers = sum(1 for t in texts if "SECTION_HEADER" in str(t.get("label", "")))
+    replacement_chars, non_ascii_chars = 0, 0
+    for t in texts:
+        r, n = _detect_garbled(str(t.get("text", "")))
+        replacement_chars += r
+        non_ascii_chars += n
+
+    metrics = {
+        "page_count": page_count,
+        "text_items": len(texts),
+        "tables": len(tables),
+        "pictures": len(pictures),
+        "total_chars": total_chars,
+        "chars_per_page": round(chars_per_page, 1),
+        "section_headers": section_headers,
+        "replacement_chars": replacement_chars,
+        "non_ascii_chars": non_ascii_chars,
+    }
 
     if total_chars < 100:
         issues.append("Very low text content")
         actions.append("Retry with OCR enabled or a different pipeline")
+    elif chars_per_page < 50 and page_count > 1:
+        issues.append(f"Low text density ({chars_per_page:.0f} chars/page)")
+        actions.append("Document may be scanned or image-heavy; retry with OCR")
+
+    if replacement_chars > 10:
+        issues.append(f"Found {replacement_chars} Unicode replacement characters (garbled text)")
+        actions.append("Check document encoding or retry with OCR")
+
+    if not _has_section_headers(texts) and page_count >= 3:
+        issues.append("No section headers found in document")
+        actions.append("Document may lack structure; verify extraction quality")
+
+    dup = _find_duplicate_text(texts)
+    if dup:
+        issues.append(f"Highly repetitive text detected: '{dup}...'")
+        actions.append("Document may contain boilerplate; verify chunking quality")
+
+    coverage = _page_coverage(texts, page_count)
+    if coverage < 0.5 and page_count > 1:
+        issues.append(f"Only {coverage:.0%} of pages have text content")
+        actions.append("Some pages may be image-only; retry with OCR")
 
     if markdown_path:
         md = Path(markdown_path)
         if md.is_file():
             md_len = len(md.read_text(encoding="utf-8"))
+            metrics["markdown_chars"] = md_len
             if md_len < 200:
                 issues.append(f"Markdown too short ({md_len} chars)")
                 actions.append("Retry with --pipeline vlm")
@@ -123,7 +219,7 @@ def _basic_fallback(
     status = "fail" if issues else "pass"
     return QualityReport(
         status=status,
-        metrics={"text_items": len(texts), "tables": len(tables), "total_chars": total_chars},
+        metrics=metrics,
         issues=issues,
         recommended_actions=actions,
     )

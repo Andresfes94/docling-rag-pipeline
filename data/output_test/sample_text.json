@@ -1,0 +1,259 @@
+{
+  "schema_name": "DoclingDocument",
+  "version": "1.10.0",
+  "name": "sample_text",
+  "origin": {
+    "mimetype": "application/pdf",
+    "binary_hash": 9861896526812618242,
+    "filename": "sample_text.pdf"
+  },
+  "furniture": {
+    "self_ref": "#/furniture",
+    "children": [],
+    "content_layer": "furniture",
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "body": {
+    "self_ref": "#/body",
+    "children": [
+      {
+        "$ref": "#/texts/0"
+      },
+      {
+        "$ref": "#/texts/1"
+      },
+      {
+        "$ref": "#/texts/2"
+      },
+      {
+        "$ref": "#/texts/3"
+      },
+      {
+        "$ref": "#/texts/4"
+      },
+      {
+        "$ref": "#/texts/5"
+      },
+      {
+        "$ref": "#/texts/6"
+      }
+    ],
+    "content_layer": "body",
+    "name": "_root_",
+    "label": "unspecified"
+  },
+  "groups": [],
+  "texts": [
+    {
+      "self_ref": "#/texts/0",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "section_header",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 31.18,
+            "t": 812.5560146484376,
+            "r": 238.6,
+            "b": 801.4560146484375,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            39
+          ]
+        }
+      ],
+      "orig": "Quantitative Trading: A Practical Guide",
+      "text": "Quantitative Trading: A Practical Guide",
+      "level": 1
+    },
+    {
+      "self_ref": "#/texts/1",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 31.18,
+            "t": 784.2160146484375,
+            "r": 564.1010000000007,
+            "b": 761.1160146484375,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            197
+          ]
+        }
+      ],
+      "orig": "This  document  describes  quantitative  trading  strategies  used  by  hedge  funds  and  institutional investors. Key concepts include statistical arbitrage, mean reversion, and momentum trading.",
+      "text": "This  document  describes  quantitative  trading  strategies  used  by  hedge  funds  and  institutional investors. Key concepts include statistical arbitrage, mean reversion, and momentum trading."
+    },
+    {
+      "self_ref": "#/texts/2",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 31.18,
+            "t": 746.0360146484375,
+            "r": 564.1030000000005,
+            "b": 698.9360146484374,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            317
+          ]
+        }
+      ],
+      "orig": "Chapter  1:  Introduction  to  Algorithmic  Trading.  Algorithmic  trading  uses  computer  programs  to execute trading strategies at speeds and frequencies that are impossible for human traders. The practice has grown significantly since the 2000s, accounting for over 60% of equity trading volume in major markets.",
+      "text": "Chapter  1:  Introduction  to  Algorithmic  Trading.  Algorithmic  trading  uses  computer  programs  to execute trading strategies at speeds and frequencies that are impossible for human traders. The practice has grown significantly since the 2000s, accounting for over 60% of equity trading volume in major markets."
+    },
+    {
+      "self_ref": "#/texts/3",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 31.18,
+            "t": 683.8660146484375,
+            "r": 564.1020000000007,
+            "b": 648.7660146484375,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            275
+          ]
+        }
+      ],
+      "orig": "Chapter  2:  Statistical  Arbitrage.  Statistical  arbitrage  involves  identifying  and  exploiting  pricing inefficiencies between related financial instruments. Pairs trading is a common strategy where two historically correlated assets are monitored for price divergence.",
+      "text": "Chapter  2:  Statistical  Arbitrage.  Statistical  arbitrage  involves  identifying  and  exploiting  pricing inefficiencies between related financial instruments. Pairs trading is a common strategy where two historically correlated assets are monitored for price divergence."
+    },
+    {
+      "self_ref": "#/texts/4",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 1,
+          "bbox": {
+            "l": 31.18,
+            "t": 633.6960146484375,
+            "r": 564.1000000000006,
+            "b": 598.5960146484375,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            235
+          ]
+        }
+      ],
+      "orig": "Chapter 3: Risk Management. Proper risk management is essential for long-term trading success. Position  sizing,  stop-loss  orders,  and  portfolio  diversification  help  mitigate  potential  losses  during adverse market conditions.",
+      "text": "Chapter 3: Risk Management. Proper risk management is essential for long-term trading success. Position  sizing,  stop-loss  orders,  and  portfolio  diversification  help  mitigate  potential  losses  during adverse market conditions."
+    },
+    {
+      "self_ref": "#/texts/5",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "furniture",
+      "label": "page_header",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 31.18,
+            "t": 812.5560146484376,
+            "r": 160.576,
+            "b": 801.4560146484375,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            22
+          ]
+        }
+      ],
+      "orig": "Appendix: Data Sources",
+      "text": "Appendix: Data Sources"
+    },
+    {
+      "self_ref": "#/texts/6",
+      "parent": {
+        "$ref": "#/body"
+      },
+      "children": [],
+      "content_layer": "body",
+      "label": "text",
+      "prov": [
+        {
+          "page_no": 2,
+          "bbox": {
+            "l": 31.18,
+            "t": 784.2160146484375,
+            "r": 564.0950000000006,
+            "b": 749.1160146484375,
+            "coord_origin": "BOTTOMLEFT"
+          },
+          "charspan": [
+            0,
+            252
+          ]
+        }
+      ],
+      "orig": "Common  data  sources  for  quantitative  research  include:  market  data  feeds  from  exchanges, alternative  data  providers,  SEC  filings,  and  economic  indicators.  Historical  data  quality  and survivorship bias are important considerations.",
+      "text": "Common  data  sources  for  quantitative  research  include:  market  data  feeds  from  exchanges, alternative  data  providers,  SEC  filings,  and  economic  indicators.  Historical  data  quality  and survivorship bias are important considerations."
+    }
+  ],
+  "pictures": [],
+  "tables": [],
+  "key_value_items": [],
+  "form_items": [],
+  "pages": {
+    "1": {
+      "size": {
+        "width": 595.280029296875,
+        "height": 841.8900146484375
+      },
+      "page_no": 1
+    },
+    "2": {
+      "size": {
+        "width": 595.280029296875,
+        "height": 841.8900146484375
+      },
+      "page_no": 2
+    }
+  }
+}

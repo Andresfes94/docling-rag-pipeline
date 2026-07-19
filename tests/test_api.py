@@ -4,14 +4,26 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from src.api.server import app
+from src.api.cache import RetrievalCache
+from src.api.server import app, get_cache, get_pipeline, get_tasks
+from src.retrieval.pipeline import RAGPipeline
 
 
 @pytest_asyncio.fixture
 async def client():
+    pipeline = RAGPipeline()
+    cache = RetrievalCache(capacity=64, ttl=60)
+    tasks: dict = {}
+
+    app.dependency_overrides[get_pipeline] = lambda: pipeline
+    app.dependency_overrides[get_cache] = lambda: cache
+    app.dependency_overrides[get_tasks] = lambda: tasks
+
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+    app.dependency_overrides.clear()
 
 
 class TestAPI:
@@ -51,20 +63,24 @@ class TestAPI:
         ct = resp.headers.get("content-type", "")
         assert "text/event-stream" in ct
 
-    async def test_ingest_returns_task(self, client):
+    async def test_ingest_returns_task(self, client, tmp_path):
+        f = tmp_path / "test.pdf"
+        f.write_text("dummy pdf content")
         resp = await client.post("/ingest", json={
-            "source": "/nonexistent/file.pdf",
+            "source": str(f),
             "profile": "standard",
         })
         assert resp.status_code == 200
         data = resp.json()
         assert "task_id" in data
-        assert data["source"] == "/nonexistent/file.pdf"
+        assert data["source"] == str(f)
         assert data["status"] == "pending"
 
-    async def test_ingest_task_status(self, client):
+    async def test_ingest_task_status(self, client, tmp_path):
+        f = tmp_path / "test2.pdf"
+        f.write_text("dummy pdf content")
         resp = await client.post("/ingest", json={
-            "source": "/nonexistent/file2.pdf",
+            "source": str(f),
             "profile": "standard",
         })
         task_id = resp.json()["task_id"]
@@ -123,3 +139,11 @@ class TestAPI:
         resp = await client.get("/status")
         assert "X-Request-ID" in resp.headers
         assert "X-Response-Time-Ms" in resp.headers
+
+    async def test_health_public_no_key(self, client):
+        resp = await client.get("/health")
+        assert resp.status_code == 200
+
+    async def test_metrics_public_no_key(self, client):
+        resp = await client.get("/metrics")
+        assert resp.status_code == 200

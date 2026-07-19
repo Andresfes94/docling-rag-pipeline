@@ -1,0 +1,11 @@
+# Optional — deep enrichment (--deep flag)
+pdfplumber>=0.7.0
+camelot-py[base]>=0.10.0
+unstructured[pdf]>=0.10.0
+tabulate>=0.8.0
+
+# Optional — Streamlit UIs
+streamlit>=1.28.0
+
+# Optional — PDF rendering for viewers
+PyMuPDF>=1.23.0

@@ -1,28 +1,4 @@
-# Core RAG pipeline
-docling>=2.81.0
-docling-core>=2.67.1
-sentence-transformers>=2.2.0
-chromadb>=0.4.0
-fastapi>=0.100.0
-uvicorn>=0.23.0
-pyyaml>=6.0
-pydantic>=2.0
-httpx>=0.24.0
-
-# Deep enrichment (optional at runtime, required for --deep)
-pdfplumber>=0.7.0
-camelot-py[base]>=0.10.0
-unstructured[pdf]>=0.10.0
-tabulate>=0.8.0
-
-# Streamlit UIs
-streamlit>=1.28.0
-
-# PDF rendering for viewers
-PyMuPDF>=1.23.0
-
-# Development / testing
-pytest>=7.0
-pytest-asyncio>=0.21.0
-ruff>=0.1.0
-mypy>=1.0
+# Convenience: install everything (core + optional + dev)
+-r requirements-core.txt
+-r requirements-optional.txt
+-r requirements-dev.txt

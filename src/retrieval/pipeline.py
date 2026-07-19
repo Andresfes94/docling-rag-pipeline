@@ -12,6 +12,8 @@ from src.ingestion.extractor import extract
 from src.ingestion.chunker import ChunkingResult, chunk_document
 from src.ingestion.quality import QualityReport, evaluate
 from src.ingestion.detector import detect
+from src.ingestion.cleaner import TextCleaner
+from src.retrieval.reranker import CrossEncoderReranker
 from src.storage.vector_store import VectorStore, RetrievalResult
 
 _log = logging.getLogger(__name__)
@@ -47,6 +49,8 @@ class RAGPipeline:
         evaluator_script: str | Path = "scripts/docling-evaluate.py",
         fail_on_warn: bool = False,
         auto_retry: bool = True,
+        cleaner: TextCleaner | None = None,
+        reranker: CrossEncoderReranker | None = None,
     ):
         self._embedding_model = embedding_model
         self._chunk_max_tokens = chunk_max_tokens
@@ -55,6 +59,8 @@ class RAGPipeline:
         self._evaluator_script = Path(evaluator_script)
         self._fail_on_warn = fail_on_warn
         self._auto_retry = auto_retry
+        self._cleaner = cleaner or TextCleaner()
+        self._reranker = reranker
         self._store = VectorStore(
             persist_directory=persist_directory,
             collection_name=collection_name,
@@ -167,6 +173,14 @@ class RAGPipeline:
                 chunking.empty_document,
             )
 
+            cleaned = self._cleaner.process_chunks(chunking.chunks)
+            if not cleaned:
+                result.success = False
+                result.error = "All chunks removed during cleaning (empty or duplicate)"
+                return result
+            chunking.chunks = cleaned
+            chunking.total_chunks = len(cleaned)
+
             if chunking.empty_document:
                 result.success = False
                 result.error = "No text content extracted (document may be scanned or formula-only)"
@@ -227,13 +241,40 @@ class RAGPipeline:
         query: str,
         k: int = 5,
         where: dict | None = None,
+        rerank: bool = True,
+        min_rerank_score: float | None = None,
     ) -> RetrievalResult:
-        return self._store.query(
+        initial_k = k * 3 if (rerank and self._reranker) else k
+        result = self._store.query(
             query_text=query,
-            k=k,
+            k=initial_k,
             model_name=self._embedding_model,
             where=where,
         )
+
+        if rerank and self._reranker and result.results:
+            reranked = self._reranker.rerank(
+                query=query,
+                chunks=result.results,
+                keep=k,
+                min_score=min_rerank_score,
+            )
+            reranked_chunks = [
+                RetrievedChunk(
+                    text=r["chunk"].text,
+                    contextualized_text=r["chunk"].contextualized_text,
+                    score=r["score"],
+                    metadata=r["chunk"].metadata if hasattr(r["chunk"], "metadata") else {},
+                )
+                for r in reranked
+            ]
+            return RetrievalResult(
+                query=query,
+                results=reranked_chunks,
+                total_results=len(reranked_chunks),
+            )
+
+        return result
 
     def delete_source(self, source: str) -> int:
         return self._store.delete_source(source)

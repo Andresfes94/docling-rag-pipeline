@@ -2,60 +2,79 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, AsyncGenerator
 
-from fastapi import BackgroundTasks, FastAPI, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
+from src.api import auth
+from src.api.auth import AuthMiddleware, _load_keys
+from src.api.tracing import setup_tracing
+from src.api.validation import validate_source
+from src.api.cache import RetrievalCache
+from src.api.logging_config import setup_logging, set_elapsed_ms, set_request_id
+from src.api.metrics import (
+    ingest_documents_total,
+    retrieve_chunks_total,
+    retrieve_requests_total,
+    setup_metrics,
+)
 from src.api.models import (
     DeleteResponse,
     DocumentInfoResponse,
     DocumentListResponse,
     ErrorResponse,
     IngestRequest,
-    IngestResponse,
     IngestTaskResponse,
     RetrieveRequest,
     RetrieveResponse,
     RetrievedChunkResponse,
     StatusResponse,
 )
-from src.api.cache import RetrievalCache
 from src.api.rate_limiter import RateLimiterMiddleware
 from src.retrieval.pipeline import RAGPipeline
+from src.retrieval.reranker import CrossEncoderReranker
+
+from dotenv import load_dotenv
+
+from src.config import Settings
+
+load_dotenv()
+
+settings = Settings.from_env()
+setup_logging()
 
 _log = logging.getLogger(__name__)
-
-_pipeline: RAGPipeline | None = None
-_cache: RetrievalCache | None = None
-_tasks: dict[str, dict[str, Any]] = {}
-
-
-def get_pipeline() -> RAGPipeline:
-    global _pipeline
-    if _pipeline is None:
-        _pipeline = RAGPipeline()
-    return _pipeline
-
-
-def get_cache() -> RetrievalCache:
-    global _cache
-    if _cache is None:
-        _cache = RetrievalCache(capacity=1024, ttl=300)
-    return _cache
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    errors = settings.validate()
+    if errors:
+        msg = "Configuration errors:\n  " + "\n  ".join(errors)
+        _log.error(msg)
+        raise RuntimeError(msg)
+    setup_tracing()
     _log.info("RAG Pipeline API starting...")
-    get_pipeline()
-    get_cache()
-    _log.info("Vector store: %d documents", _pipeline.store.document_count() if _pipeline else 0)
+    reranker = CrossEncoderReranker()
+    app.state.pipeline = RAGPipeline(
+        persist_directory=settings.chroma_persist_dir,
+        embedding_model=settings.embedding_model,
+        chunk_max_tokens=settings.chunk_max_tokens,
+        profiles_path=settings.profiles_path,
+        output_dir=settings.output_dir,
+        evaluator_script=settings.evaluator_script,
+        reranker=reranker,
+    )
+    app.state.cache = RetrievalCache(capacity=settings.cache_capacity, ttl=settings.cache_ttl)
+    app.state.tasks: dict[str, dict[str, Any]] = {}
+    _log.info("Vector store: %d documents", app.state.pipeline.store.document_count())
     yield
     _log.info("RAG Pipeline API shutting down...")
 
@@ -92,15 +111,49 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+cors_origins = settings.cors_origins.split(",")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+app.add_middleware(AuthMiddleware)
 app.add_middleware(RateLimiterMiddleware, default_rate=10.0, default_burst=20)
+setup_metrics(app)
+
+_load_keys()
+
+
+# --- Dependencies ---
+
+
+def get_pipeline(request: Request) -> RAGPipeline:
+    return request.app.state.pipeline
+
+
+def get_cache(request: Request) -> RetrievalCache:
+    return request.app.state.cache
+
+
+def get_tasks(request: Request) -> dict[str, dict[str, Any]]:
+    return request.app.state.tasks
+
+
+# --- Auth reload ---
+
+
+@app.post("/auth/reload", summary="Reload API keys from environment", include_in_schema=False)
+async def auth_reload() -> dict[str, str]:
+    _load_keys()
+    count = len(auth.API_KEYS) if hasattr(auth, "API_KEYS") else 0
+    _log.info("API keys reloaded (%d key(s))", count)
+    return {"status": "ok", "keys_loaded": count}
+
+
+# --- Exception handler ---
 
 
 @app.exception_handler(Exception)
@@ -120,11 +173,14 @@ async def global_exception_handler(request: Request, exc: Exception) -> JSONResp
 async def request_id_middleware(request: Request, call_next: Any) -> Any:
     rid = str(uuid.uuid4())[:8]
     request.state.request_id = rid
+    set_request_id(rid)
     start = time.monotonic()
     response: Any = await call_next(request)
     elapsed = time.monotonic() - start
+    elapsed_ms = round(elapsed * 1000, 1)
+    set_elapsed_ms(elapsed_ms)
     response.headers["X-Request-ID"] = rid
-    response.headers["X-Response-Time-Ms"] = str(int(elapsed * 1000))
+    response.headers["X-Response-Time-Ms"] = str(int(elapsed_ms))
     return response
 
 
@@ -133,35 +189,45 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
 
 @app.get("/health", summary="Health check", response_description="Returns ok if the service is running")
 async def health() -> dict[str, str]:
-    """Lightweight health check. Returns `{\"status\": \"ok\"}` when the API is operational."""
     return {"status": "ok"}
 
 
 # --- Ingest ---
 
 
-def _run_ingest(task_id: str, source: str, profile: str, skip_quality: bool, deep: bool) -> None:
-    global _tasks
-    _tasks[task_id]["status"] = "running"
+def _run_ingest(
+    task_id: str,
+    source: str,
+    profile: str,
+    skip_quality: bool,
+    deep: bool,
+    tasks: dict[str, dict[str, Any]],
+    pipeline: RAGPipeline,
+    cache: RetrievalCache,
+) -> None:
+    tasks[task_id]["status"] = "running"
     try:
-        result = get_pipeline().ingest(
+        result = pipeline.ingest(
             source=source,
             profile=profile,
             skip_quality=skip_quality,
             deep=deep,
         )
-        _tasks[task_id].update(
-            status="done" if result.success else "failed",
+        status = "done" if result.success else "failed"
+        tasks[task_id].update(
+            status=status,
             pages=result.conversion.page_count if result.conversion else 0,
             duration_seconds=result.conversion.duration_seconds if result.conversion else 0.0,
             chunks=result.chunking.total_chunks if result.chunking else 0,
             error=result.error,
         )
+        ingest_documents_total.labels(profile=result.profile, status=status).inc()
         if result.success:
-            get_cache().invalidate(source=source)
+            cache.invalidate(source=source)
     except Exception as exc:
         _log.exception("Background ingest failed for %s", source)
-        _tasks[task_id].update(status="failed", error=str(exc))
+        tasks[task_id].update(status="failed", error=str(exc))
+        ingest_documents_total.labels(profile=profile, status="failed").inc()
 
 
 @app.post(
@@ -169,9 +235,18 @@ def _run_ingest(task_id: str, source: str, profile: str, skip_quality: bool, dee
     summary="Ingest a document (async)",
     response_description="Returns a task ID immediately; poll GET /ingest/{task_id} for status",
 )
-async def ingest(req: IngestRequest, background_tasks: BackgroundTasks) -> IngestTaskResponse:
+async def ingest(
+    req: IngestRequest,
+    background_tasks: BackgroundTasks,
+    pipeline: RAGPipeline = Depends(get_pipeline),
+    cache: RetrievalCache = Depends(get_cache),
+    tasks: dict[str, dict[str, Any]] = Depends(get_tasks),
+) -> IngestTaskResponse:
+    err = validate_source(req.source)
+    if err:
+        raise HTTPException(status_code=400, detail=err)
     task_id = str(uuid.uuid4())
-    _tasks[task_id] = {
+    tasks[task_id] = {
         "task_id": task_id,
         "source": req.source,
         "status": "pending",
@@ -182,7 +257,8 @@ async def ingest(req: IngestRequest, background_tasks: BackgroundTasks) -> Inges
         "error": None,
     }
     background_tasks.add_task(
-        _run_ingest, task_id, req.source, req.profile, req.skip_quality, req.deep
+        _run_ingest, task_id, req.source, req.profile, req.skip_quality, req.deep,
+        tasks, pipeline, cache,
     )
     _log.info("Ingest task %s enqueued for %s", task_id, req.source)
     return IngestTaskResponse(
@@ -198,8 +274,11 @@ async def ingest(req: IngestRequest, background_tasks: BackgroundTasks) -> Inges
     summary="Poll ingest task status",
     response_description="Current status of the async ingest task (pending/running/done/failed)",
 )
-async def ingest_status(task_id: str) -> IngestTaskResponse:
-    task = _tasks.get(task_id)
+async def ingest_status(
+    task_id: str,
+    tasks: dict[str, dict[str, Any]] = Depends(get_tasks),
+) -> IngestTaskResponse:
+    task = tasks.get(task_id)
     if task is None:
         raise HTTPException(status_code=404, detail=f"Task {task_id} not found")
     return IngestTaskResponse(**task)
@@ -242,30 +321,29 @@ def _where_from_filters(sources: list[str] | None, page_range: list[int] | None)
     summary="Retrieve relevant chunks",
     response_description="Returns ranked chunks matching the query, optionally as assembled LLM context",
 )
-async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
-    """Semantic search over ingested documents.
-
-    Supports filtering by **source** and **page range**, minimum score threshold,
-    and two output formats:
-    - `format=json` (default): returns raw chunks with scores and metadata
-    - `format=llm`: assembles chunks into a single context string ready for LLM prompt injection
-
-    Results are **cached** for 5 minutes (keyed by query, k, sources, and format).
-    Cache is invalidated when a document is re-ingested or deleted.
-    """
+async def retrieve(
+    req: RetrieveRequest,
+    pipeline: RAGPipeline = Depends(get_pipeline),
+    cache: RetrievalCache = Depends(get_cache),
+) -> RetrieveResponse:
     if req.sources:
         src_filter = tuple(sorted(req.sources))
     else:
         src_filter = None
 
-    cache = get_cache()
     cached = cache.get(req.query, req.k, sources=src_filter, fmt=req.format)
     if cached is not None:
         _log.info("Cache hit for query='%s' k=%d fmt=%s", req.query[:60], req.k, req.format)
         return RetrieveResponse(**cached)
 
     where = _where_from_filters(req.sources, req.page_range)
-    result = get_pipeline().retrieve(query=req.query, k=req.k, where=where)
+    result = pipeline.retrieve(
+        query=req.query,
+        k=req.k,
+        where=where,
+        rerank=req.rerank,
+        min_rerank_score=req.min_rerank_score,
+    )
 
     chunks = [
         RetrievedChunkResponse(
@@ -280,6 +358,9 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
 
     if req.min_score is not None:
         chunks = [c for c in chunks if c.score >= req.min_score]
+
+    retrieve_requests_total.labels(cache_hit="false").inc()
+    retrieve_chunks_total.inc(len(chunks))
 
     context_str = _build_llm_context(chunks) if req.format == "llm" else None
 
@@ -299,7 +380,7 @@ async def retrieve(req: RetrieveRequest) -> RetrieveResponse:
 @app.get(
     "/retrieve/stream",
     summary="Stream retrieve results via SSE",
-    response_description="Server-Sent Events stream: meta → chunk (×N) → done",
+    response_description="Server-Sent Events stream: meta -> chunk (xN) -> done",
 )
 async def retrieve_stream(
     query: str = Query(..., description="Search query"),
@@ -307,10 +388,13 @@ async def retrieve_stream(
     sources: str | None = Query(None, description="Comma-separated source filter, e.g. 'doc1.pdf,doc2.pdf'"),
     format: str = Query("json", description='Output format per chunk: "json" or "llm"'),
     min_score: float | None = Query(None, ge=0.0, le=1.0, description="Minimum similarity score threshold"),
+    rerank: bool = Query(True, description="Enable cross-encoder reranking"),
+    min_rerank_score: float | None = Query(None, ge=0.0, le=1.0, description="Minimum reranker score"),
+    pipeline: RAGPipeline = Depends(get_pipeline),
 ) -> StreamingResponse:
     src_list = sources.split(",") if sources else None
     where = _where_from_filters(src_list, None)
-    result = get_pipeline().retrieve(query=query, k=k, where=where)
+    result = pipeline.retrieve(query=query, k=k, where=where, rerank=rerank, min_rerank_score=min_rerank_score)
 
     chunks = [
         RetrievedChunkResponse(
@@ -326,26 +410,21 @@ async def retrieve_stream(
     if min_score is not None:
         chunks = [c for c in chunks if c.score >= min_score]
 
-    """Stream retrieval results as Server-Sent Events.
-
-    Events:
-    - `meta`: total result count and format
-    - `chunk`: individual result (depends on format parameter)
-    - `done`: signals stream completion
-
-    Use with an EventSource client or any SSE-capable HTTP client.
-    """
     async def event_stream() -> AsyncGenerator[str, None]:
-        yield f"event: meta\ndata: {{\"total\": {len(chunks)}, \"format\": \"{format}\"}}\n\n"
-        for i, chunk in enumerate(chunks):
-            if format == "llm":
-                h = f"Source: {chunk.source} | Page: {chunk.page} | Section: {chunk.headings}" if chunk.source else ""
-                data = f"[{i+1}] {h}\n{chunk.text}"
-            else:
-                data = chunk.model_dump_json()
-            yield f"event: chunk\ndata: {data}\n\n"
-            await asyncio.sleep(0)
-        yield "event: done\ndata: {}\n\n"
+        try:
+            yield f"event: meta\ndata: {{\"total\": {len(chunks)}, \"format\": \"{format}\"}}\n\n"
+            for i, chunk in enumerate(chunks):
+                if format == "llm":
+                    h = f"Source: {chunk.source} | Page: {chunk.page} | Section: {chunk.headings}" if chunk.source else ""
+                    data = f"[{i+1}] {h}\n{chunk.text}"
+                else:
+                    data = chunk.model_dump_json()
+                yield f"event: chunk\ndata: {data}\n\n"
+                await asyncio.sleep(0)
+            yield "event: done\ndata: {}\n\n"
+        except Exception as exc:
+            _log.exception("SSE stream error for query='%s'", query)
+            yield f"event: error\ndata: {{\"detail\": \"{exc}\"}}\n\n"
 
     return StreamingResponse(
         event_stream(),
@@ -365,8 +444,9 @@ async def retrieve_stream(
     summary="List ingested documents",
     response_description="All documents currently stored in the vector store with chunk counts and metadata",
 )
-async def list_documents() -> DocumentListResponse:
-    pipeline = get_pipeline()
+async def list_documents(
+    pipeline: RAGPipeline = Depends(get_pipeline),
+) -> DocumentListResponse:
     sources = pipeline.list_documents()
     docs: list[dict] = []
     for src in sources:
@@ -381,8 +461,10 @@ async def list_documents() -> DocumentListResponse:
     summary="Get document details",
     response_description="Detailed information about a specific document: chunk count, pages, profiles used",
 )
-async def get_document(source: str) -> DocumentInfoResponse:
-    pipeline = get_pipeline()
+async def get_document(
+    source: str,
+    pipeline: RAGPipeline = Depends(get_pipeline),
+) -> DocumentInfoResponse:
     info = pipeline.get_document_info(source)
     if info is None:
         raise HTTPException(status_code=404, detail=f"Document '{source}' not found in store")
@@ -394,13 +476,16 @@ async def get_document(source: str) -> DocumentInfoResponse:
     summary="Delete a document",
     response_description="Removes all chunks for the given source and invalidates the cache",
 )
-async def delete_document(source: str) -> DeleteResponse:
-    pipeline = get_pipeline()
+async def delete_document(
+    source: str,
+    pipeline: RAGPipeline = Depends(get_pipeline),
+    cache: RetrievalCache = Depends(get_cache),
+) -> DeleteResponse:
     info = pipeline.get_document_info(source)
     if info is None:
         return DeleteResponse(success=False, source=source, error=f"Document '{source}' not found")
     count = pipeline.delete_source(source)
-    get_cache().invalidate(source=source)
+    cache.invalidate(source=source)
     _log.info("Deleted document '%s': %d chunks removed", source, count)
     return DeleteResponse(success=True, source=source, chunks_removed=count)
 
@@ -413,15 +498,17 @@ async def delete_document(source: str) -> DeleteResponse:
     summary="Pipeline status",
     response_description="Overview of the vector store, document count, sources, and cache state",
 )
-async def status() -> StatusResponse:
-    pipeline = get_pipeline()
+async def status(
+    pipeline: RAGPipeline = Depends(get_pipeline),
+    cache: RetrievalCache = Depends(get_cache),
+) -> StatusResponse:
     s = pipeline.status()
     return StatusResponse(
         document_count=s["document_count"],
         sources=s["sources"],
         embedding_model=s["embedding_model"],
         chunk_count_by_source=s.get("chunk_count_by_source", {}),
-        cache_entries=get_cache().size,
+        cache_entries=cache.size,
     )
 
 
@@ -432,8 +519,8 @@ def main() -> None:
     import uvicorn
     uvicorn.run(
         "src.api.server:app",
-        host="0.0.0.0",
-        port=8000,
+        host=settings.api_host,
+        port=settings.api_port,
         reload=True,
         log_level="info",
     )

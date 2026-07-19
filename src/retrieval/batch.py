@@ -11,6 +11,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+try:
+    import portalocker
+    HAS_PORTALOCKER = True
+except ImportError:
+    HAS_PORTALOCKER = False
+
 from src.ingestion.loader import convert as convert_doc
 from src.ingestion.extractor import extract
 from src.ingestion.chunker import ChunkingResult, chunk_document
@@ -194,12 +200,20 @@ def ingest_batch(
     total_duration = time.time() - start
 
     # Phase 2: batch-import all staging files to Chroma (single process)
+    _LOCK_PATH = Path("data/chroma/.batch_lock")
+    _LOCK_PATH.parent.mkdir(parents=True, exist_ok=True)
+
     pipeline = RAGPipeline(
         output_dir=output_dir,
         profiles_path=profiles_path,
         chunk_max_tokens=chunk_max_tokens,
         embedding_model=embedding_model,
     )
+
+    if HAS_PORTALOCKER:
+        _LOCK_FILE = open(_LOCK_PATH, "w")
+        portalocker.lock(_LOCK_FILE, portalocker.LOCK_EX)
+        _log.info("Acquired cross-process lock for Chroma import")
 
     staging_dir = _worker_staging_dir()
     imported = 0
@@ -231,6 +245,11 @@ def ingest_batch(
                     staging_path.unlink()
                 except Exception as exc:
                     _log.error("Failed to import staging for %s: %s", r.source, exc)
+
+    if HAS_PORTALOCKER:
+        portalocker.unlock(_LOCK_FILE)
+        _LOCK_FILE.close()
+        _log.info("Released cross-process lock for Chroma import")
 
     _log.info("Batch complete: %d/%d succeeded, %d imported to Chroma in %.1fs",
               sum(1 for r in results if r.success), len(results), imported, total_duration)

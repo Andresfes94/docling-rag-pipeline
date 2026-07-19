@@ -17,12 +17,18 @@ dependencies = [
     "pyyaml>=6.0",
     "pydantic>=2.0",
     "httpx>=0.24.0",
+    "prometheus-client>=0.19.0",
+    "python-json-logger>=2.0.0",
+    "python-dotenv>=1.0.0",
+    "portalocker>=2.8.0",
+    "rank-bm25>=0.2.2",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0",
     "pytest-asyncio>=0.21.0",
+    "pytest-xdist>=3.0",
     "ruff>=0.1.0",
     "mypy>=1.0",
 ]
@@ -34,6 +40,12 @@ vlm = [
 mlx = [
     "mlx>=0.10.0",
     "mlx-lm>=0.10.0",
+]
+tracing = [
+    "opentelemetry-api>=1.20.0",
+    "opentelemetry-sdk>=1.20.0",
+    "opentelemetry-exporter-otlp-proto-http>=1.20.0",
+    "opentelemetry-instrumentation-fastapi>=0.40.0",
 ]
 
 [tool.setuptools.packages.find]
@@ -54,3 +66,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "integration: end-to-end tests using real Docling conversion and Chroma (slow)",
+    "slow: tests that take > 10 seconds",
+]

@@ -162,7 +162,10 @@ def answer_question(
 
     prompt = build_rag_prompt(question, context)
     llm_result = llm_client.generate(prompt, system=SYSTEM_PROMPT, temperature=0.1, max_tokens=512)
-    answer = llm_result["text"]
+    answer = llm_result.get("text", "").strip()
+
+    if not answer:
+        answer = "There is no data about this in the available documents."
 
     sources_used = parse_sources(answer, chunks)
 

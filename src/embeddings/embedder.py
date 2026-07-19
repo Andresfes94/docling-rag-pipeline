@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import functools
 import logging
 
 import numpy as np
@@ -8,14 +9,10 @@ from sentence_transformers import SentenceTransformer
 _log = logging.getLogger(__name__)
 
 
-_MODEL_CACHE: dict[str, SentenceTransformer] = {}
-
-
+@functools.lru_cache(maxsize=4)
 def _get_model(model_name: str = "sentence-transformers/all-MiniLM-L6-v2") -> SentenceTransformer:
-    if model_name not in _MODEL_CACHE:
-        _log.info("Loading embedding model: %s...", model_name)
-        _MODEL_CACHE[model_name] = SentenceTransformer(model_name, device="cpu")
-    return _MODEL_CACHE[model_name]
+    _log.info("Loading embedding model: %s...", model_name)
+    return SentenceTransformer(model_name, device="cpu")
 
 
 def embed_text(

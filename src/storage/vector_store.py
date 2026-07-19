@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,8 @@ class VectorStore:
     ):
         self.persist_directory = Path(persist_directory)
         self.persist_directory.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
+        self._async_lock: threading.Lock | None = None
 
         self._client = chromadb.PersistentClient(
             path=str(self.persist_directory),
@@ -57,36 +60,48 @@ class VectorStore:
         chunks: list[Any],
         source: str,
         model_name: str = "sentence-transformers/all-MiniLM-L6-v2",
+        use_async_lock: bool = False,
     ) -> int:
         if not chunks:
             return 0
 
-        texts = [c.contextualized_text for c in chunks]
-        ids = [f"{source}_chunk_{c.chunk_index}" for c in chunks]
-        metadatas = [
-            {
-                "source": source,
-                "chunk_index": c.chunk_index,
-                "page": c.page or 0,
-                "token_count": c.token_count,
-                "headings": " > ".join(c.headings) if c.headings else "",
-            }
-            for c in chunks
-        ]
+        lock = self._async_lock if use_async_lock else self._lock
+        with lock:
+            existing = self._collection.get(
+                where={"source": source},
+                include=[],
+            )
+            existing_ids = existing.get("ids") or []
+            if existing_ids:
+                _log.info("Removing %d existing chunks for source '%s' (idempotent re-ingest)", len(existing_ids), source)
+                self._collection.delete(ids=existing_ids)
 
-        _log.info("Embedding %d chunks...", len(texts))
-        embeddings = embed_batch(texts, model_name=model_name)
+            texts = [c.contextualized_text for c in chunks]
+            ids = [f"{source}_chunk_{c.chunk_index}" for c in chunks]
+            metadatas = [
+                {
+                    "source": source,
+                    "chunk_index": c.chunk_index,
+                    "page": c.page or 0,
+                    "token_count": c.token_count,
+                    "headings": " > ".join(c.headings) if c.headings else "",
+                }
+                for c in chunks
+            ]
 
-        self._collection.add(
-            embeddings=embeddings.tolist(),
-            documents=texts,
-            metadatas=metadatas,
-            ids=ids,
-        )
+            _log.info("Embedding %d chunks...", len(texts))
+            embeddings = embed_batch(texts, model_name=model_name)
 
-        count = self._collection.count()
-        _log.info("Added %d chunks. Total in store: %d", len(chunks), count)
-        return count
+            self._collection.add(
+                embeddings=embeddings.tolist(),
+                documents=texts,
+                metadatas=metadatas,
+                ids=ids,
+            )
+
+            count = self._collection.count()
+            _log.info("Added %d chunks. Total in store: %d", len(chunks), count)
+            return count
 
     def count_by_source(self) -> dict[str, int]:
         all_meta = self._collection.get(include=["metadatas"])
@@ -116,6 +131,11 @@ class VectorStore:
             "pages": pages,
             "profiles_used": profiles,
         }
+
+    def enable_async(self) -> None:
+        import asyncio
+        if self._async_lock is None:
+            self._async_lock = asyncio.Lock()
 
     def delete_source(self, source: str) -> int:
         all_ids = self._collection.get(

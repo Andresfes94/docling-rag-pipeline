@@ -2,11 +2,13 @@ services:
   rag-pipeline:
     build: .
     ports:
-      - "8000:8000"
+      - "${API_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ./profiles.yaml:/app/profiles.yaml
       - ./scripts/docling-evaluate.py:/app/scripts/docling-evaluate.py
+    env_file:
+      - .env
     environment:
       - DOCLING_LOG_LEVEL=INFO
     restart: unless-stopped
