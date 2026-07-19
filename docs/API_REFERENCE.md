@@ -67,6 +67,28 @@ curl http://localhost:8000/health
 
 ---
 
+### `GET /profiles`
+
+List all available pipeline profiles with descriptions and options.
+
+```bash
+curl http://localhost:8000/profiles
+# → {"profiles": [{"name": "standard", "description": "Fast path...",
+#                   "pipeline": "standard", "options": {...}}, ...],
+#     "total": 13}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `str` | Profile name, used as the `profile` field in `POST /ingest` |
+| `description` | `str` | Human-readable description of the profile |
+| `pipeline` | `str` | Backend type: `standard`, `vlm`, or `hybrid` |
+| `options` | `dict` | Profile-specific configuration (OCR engine, VLM model, thresholds) |
+
+---
+
+
+
 ### `POST /ingest`
 
 Ingest a document asynchronously. Returns immediately with a `task_id` — poll `GET /ingest/{task_id}` for completion.
@@ -79,9 +101,9 @@ curl -X POST http://localhost:8000/ingest \
 ```
 
 | Field | Type | Default | Description |
-|---|---|---|---|
+|---|---|---|---|---|
 | `source` | `str` | **required** | Local file path or URL. Supported: `.pdf`, `.xlsx`, `.docx`, `.pptx`, `.csv`, `.html`, `.png`, `.jpg`, `.jpeg` |
-| `profile` | `str` | `"standard"` | Pipeline profile: `standard`, `ocrmac`, `ocr_easyocr`, `vlm_granite`, `fast`, `large_document`, `auto` |
+| `profile` | `str` | `"standard"` | Pipeline profile: `standard`, `fast`, `large_document`, `ocr_easyocr`, `ocr_tesseract`, `ocrmac`, `ocr_rapid`, `vlm_granite`, `vlm_smoldocling`, `vlm_remote`, `hybrid`, `hybrid_accuracy`. See `profiles.yaml` for full descriptions. |
 | `skip_quality` | `bool` | `false` | Skip Docling quality evaluation gate |
 | `deep` | `bool` | `false` | Enable Camelot table fallback + Unstructured formula patching |
 
@@ -254,7 +276,11 @@ Prometheus metrics (public, no auth).
 curl http://localhost:8000/metrics
 ```
 
-Counters: `ingest_documents_total{profile,status}`, `retrieve_requests_total{cache_hit}`, `retrieve_chunks_total`, `rate_limit_hits{endpoint}`, `cache_hits`, `cache_misses`.
+Counters: `ingest_documents_total{profile,status}`, `retrieve_requests_total{cache_hit}`, `retrieve_chunks_total`, `rate_limit_hits{endpoint}`, `cache_hits`, `cache_misses`, `profile_selected_total{profile,reason}`, `llm_calls_total{provider,status}`.
+
+Histograms: `pipeline_step_duration_seconds{step,profile,status}`, `engine_quality_score{engine}`, `rerank_score`, `llm_duration_seconds{provider}`, `ingest_duration_seconds{profile}`, `retrieve_duration_seconds`.
+
+**Prometheus:** A Prometheus service is available in `docker-compose.yml` at port `9090`, pre-configured to scrape the `/metrics` endpoint. Start it with `docker-compose up prometheus`.
 
 ---
 

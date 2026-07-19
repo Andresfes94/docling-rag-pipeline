@@ -32,6 +32,8 @@ from src.api.models import (
     ErrorResponse,
     IngestRequest,
     IngestTaskResponse,
+    ProfileInfo,
+    ProfilesListResponse,
     RetrieveRequest,
     RetrieveResponse,
     RetrievedChunkResponse,
@@ -196,6 +198,30 @@ async def request_id_middleware(request: Request, call_next: Any) -> Any:
 @app.get("/health", summary="Health check", response_description="Returns ok if the service is running")
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+# --- Profiles ---
+
+
+@app.get(
+    "/profiles",
+    summary="List available profiles",
+    response_description="All pipeline profiles with descriptions and options",
+)
+async def list_profiles() -> ProfilesListResponse:
+    import yaml
+    pp = Path(settings.profiles_path)
+    if not pp.exists():
+        return ProfilesListResponse(profiles=[], total=0)
+    with open(pp) as f:
+        data = yaml.safe_load(f)
+    raw = data.get("profiles", {}) if isinstance(data, dict) else {}
+    profiles = [
+        ProfileInfo(name=name, **entry)
+        for name, entry in raw.items()
+        if isinstance(entry, dict)
+    ]
+    return ProfilesListResponse(profiles=profiles, total=len(profiles))
 
 
 # --- Ingest ---

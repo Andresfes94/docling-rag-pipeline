@@ -28,6 +28,9 @@ class ConversionOutput:
     page_count: int = 0
     timed_out: bool = False
     error: str | None = None
+    markdown_text: str | None = None
+    pages: list[dict] | None = None
+    confidence_scores: list[float] | None = None
 
 
 def convert(

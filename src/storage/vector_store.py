@@ -85,6 +85,7 @@ class VectorStore:
                     "page": c.page or 0,
                     "token_count": c.token_count,
                     "headings": " > ".join(c.headings) if c.headings else "",
+                    **c.metadata,
                 }
                 for c in chunks
             ]

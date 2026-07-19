@@ -151,6 +151,18 @@ class DeleteResponse(BaseModel):
     error: str | None = None
 
 
+class ProfileInfo(BaseModel):
+    name: str = Field(description="Profile name, used as the `profile` field in /ingest requests")
+    description: str = Field(description="Human-readable description of the profile")
+    pipeline: str = Field(description="Pipeline backend type (standard, vlm, hybrid)")
+    options: dict[str, Any] = Field(default_factory=dict, description="Profile-specific configuration options")
+
+
+class ProfilesListResponse(BaseModel):
+    profiles: list[ProfileInfo] = Field(description="All available pipeline profiles")
+    total: int = 0
+
+
 class ErrorResponse(BaseModel):
     detail: str
     request_id: str | None = Field(default=None, description="Request ID for traceability")

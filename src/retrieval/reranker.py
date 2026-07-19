@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 import numpy as np
+
+from src.api.metrics import llm_calls_total, llm_duration_seconds, rerank_score
 
 _log = logging.getLogger(__name__)
 
@@ -34,9 +37,18 @@ class CrossEncoderReranker:
             return []
 
         self._load_model()
+        start = time.monotonic()
 
         pairs = [(query, c.text if hasattr(c, "text") else str(c)) for c in chunks]
         scores: list[float] = self._model.predict(pairs, show_progress_bar=False).tolist()
+
+        elapsed = time.monotonic() - start
+        provider = self.model_name.split("/")[0] if "/" in self.model_name else "cross-encoder"
+        llm_calls_total.labels(provider=provider, status="ok").inc()
+        llm_duration_seconds.labels(provider=provider).observe(elapsed)
+
+        for s in scores:
+            rerank_score.observe(max(0.0, min(float(s), 1.0)))
 
         indexed = list(enumerate(scores))
         indexed.sort(key=lambda x: x[1], reverse=True)
@@ -56,8 +68,8 @@ class CrossEncoderReranker:
             })
 
         _log.info(
-            "Reranked %d chunks → kept %d (model=%s, top_k=%d)",
-            len(chunks), len(results), self.model_name, keep,
+            "Reranked %d chunks → kept %d (model=%s, top_k=%d, %.2fs)",
+            len(chunks), len(results), self.model_name, keep, elapsed,
         )
         return results
 
@@ -73,9 +85,15 @@ class CrossEncoderReranker:
             return []
 
         self._load_model()
+        start = time.monotonic()
 
         pairs = [(query, r.get(text_key, "")) for r in responses]
         scores: list[float] = self._model.predict(pairs, show_progress_bar=False).tolist()
+
+        elapsed = time.monotonic() - start
+        provider = self.model_name.split("/")[0] if "/" in self.model_name else "cross-encoder"
+        llm_calls_total.labels(provider=provider, status="ok").inc()
+        llm_duration_seconds.labels(provider=provider).observe(elapsed)
 
         indexed = list(enumerate(scores))
         indexed.sort(key=lambda x: x[1], reverse=True)

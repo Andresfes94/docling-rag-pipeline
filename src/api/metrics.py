@@ -90,6 +90,32 @@ vector_store_documents = Counter(
     "Total documents in vector store",
 )
 
+pipeline_step_duration_seconds = Histogram(
+    "rag_pipeline_step_duration_seconds",
+    "Duration of each pipeline ingestion step",
+    labelnames=["step", "profile", "status"],
+    buckets=(0.1, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0, 60.0, 120.0, 300.0),
+)
+
+engine_quality_score = Histogram(
+    "rag_engine_quality_score",
+    "Quality score distribution per extraction engine",
+    labelnames=["engine"],
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
+profile_selected_total = Counter(
+    "rag_profile_selected_total",
+    "Total profile selections by reason (auto, explicit, fallback, hybrid)",
+    labelnames=["profile", "reason"],
+)
+
+rerank_score = Histogram(
+    "rag_rerank_score",
+    "Cross-encoder reranker score distribution",
+    buckets=(0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0),
+)
+
 
 class MetricsMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:

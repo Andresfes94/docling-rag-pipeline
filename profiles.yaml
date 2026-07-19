@@ -76,3 +76,17 @@ profiles:
       remote_model: "ibm-granite/granite-docling-258M"
       remote_max_tokens: 4096
       generate_page_images: true
+
+  hybrid:
+    description: "Multi-engine with per-page fallback. Escalates from PyMuPDF4LLM → Docling → Marker → cloud APIs when confidence < 0.8."
+    pipeline: hybrid
+    options:
+      confidence_threshold: 0.8
+      escalation_chain: ["pymupdf4llm", "docling", "marker", "landingai", "llamaparse"]
+
+  hybrid_accuracy:
+    description: "Highest-accuracy hybrid mode. Prefers Marker+LLM locally, falls back to cloud APIs. Threshold 0.85."
+    pipeline: hybrid
+    options:
+      confidence_threshold: 0.85
+      escalation_chain: ["marker", "docling", "landingai", "llamaparse"]
