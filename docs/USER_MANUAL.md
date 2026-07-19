@@ -399,6 +399,32 @@ export OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4318/v1/traces
 
 Each span carries attributes: `step`, `profile`, `source`, `duration_ms`, and error details if the step fails.
 
+### Grafana Dashboard
+
+A pre-built Grafana dashboard is provisioned automatically with panels for:
+
+- Pipeline step durations (p50, p95) per step and profile
+- Quality score distribution per extraction engine
+- Profile selection counters by reason
+- LLM calls and duration per provider
+- Cache hit ratio and entry count
+- Reranker score distribution
+- Ingestion and HTTP request rates
+- Ingestion duration per profile
+- Vector store document count
+- Rate limit hits
+
+```bash
+# Start everything (pipeline + Prometheus + Grafana)
+docker-compose up -d
+
+# Open Grafana at http://localhost:3000
+# Default login: admin / admin
+# Dashboard: "RAG Pipeline Overview" (auto-provisioned)
+```
+
+The dashboard refreshes every 10s and covers the last 15 minutes by default.
+
 ### Prometheus + Docker
 
 ```bash
@@ -421,6 +447,7 @@ The Prometheus config at `monitoring/prometheus.yml` scrapes the pipeline every 
 |---|---|---|
 | `rag-pipeline` | 8000 | API server |
 | `prometheus` | 9090 | Metrics collection |
+| `grafana` | 3000 | Pre-configured dashboard (auto-login: admin/admin) |
 
 ### Commands
 

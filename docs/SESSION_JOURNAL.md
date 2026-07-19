@@ -86,9 +86,20 @@ Without the env var, spans are no-ops (OpenTelemetry API defaults to NoOpTracer)
 
 The Prometheus config at `monitoring/prometheus.yml` targets the `rag-pipeline` Docker service on port 8000 at `/metrics`.
 
+### Phase 2 — Delivered
+
+| Work | What | Files |
+|---|---|---|
+| Grafana dashboard | Pre-provisioned dashboard with 15 panels: step durations (p50/p95), quality scores, profile selections, LLM calls/duration, cache ratio, reranker scores, ingestion/HTTP rates, vector store count, rate limit hits | `monitoring/grafana/dashboards/pipeline-overview.json` |
+| Grafana provisioning | Auto-configures Prometheus datasource + dashboard provider on container start | `monitoring/grafana/provisioning/datasources/prometheus.yml`, `dashboards/pipeline.yml` |
+| Grafana in Docker Compose | New `grafana` service on port 3000, admin/admin default login | `docker-compose.yml` |
+
+### User Manual
+
+Comprehensive user manual at `docs/USER_MANUAL.md` covering installation, CLI, API, profiles, observability, Docker, workflows, and troubleshooting — 577 lines.
+
 ### Next Steps for Continuing Agent
 
-1. Build `POST /pipeline/compare` endpoint for profile benchmarking (Phase 2)
-2. Add Grafana with pre-built dashboards once there's real metric data
-3. Instrument the VLM engines (Granite, SmolDocling) with token usage tracking
-4. Push `dev` branch and verify CI passes
+1. Build `POST /pipeline/compare` endpoint for profile benchmarking
+2. Instrument the VLM engines (Granite, SmolDocling) with token usage tracking
+3. Set up alerts in Grafana (Prometheus alerting rules)
